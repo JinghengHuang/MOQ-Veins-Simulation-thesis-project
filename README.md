@@ -14,3 +14,6 @@ Publisher <-> Edge-side relay <-> Subscriber
 - Simulation software:
 SUMO <-> Veins <-> OMNeT++
 
+## Next steps
+
+Experiment on simulating 5G networks between vehicles and integrate MoQ within this system
