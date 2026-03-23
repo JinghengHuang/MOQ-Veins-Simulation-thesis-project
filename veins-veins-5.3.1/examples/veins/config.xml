@@ -33,10 +33,11 @@
 
 <root>
     <AnalogueModels>
-        <AnalogueModel type="SimplePathlossModel" thresholding="true">
-            <parameter name="alpha" type="double" value="2.0"/>
+        <AnalogueModel type="TwoRayInterferenceModel">
+            <parameter name="DielectricConstant" type="double" value="1.02"/>
         </AnalogueModel>
         <AnalogueModel type="SimpleObstacleShadowing" thresholding="true">
+            <parameter name="carrierFrequency" type="double" value="5.890e+9"/>
             <obstacles>
                 <type id="building" db-per-cut="9" db-per-meter="0.4" />
             </obstacles>
