@@ -18,6 +18,10 @@ SUMO <-> Veins <-> OMNeT++
 
 Experiment on simulating 5G networks between vehicles and integrate MoQ within this system
 
+✔ Simulating 5G networks between vehicles, by integrating Veins with INET and Simu5G module
+Ongoing: Integrate MoQ
+Todo: Test MoQ performance
+
 ## Development
 
 - To simplify development difficulties, implemented directly upon the base demo project provided by Veins, which simulates a traffic congestion scenario in Erlangen.
