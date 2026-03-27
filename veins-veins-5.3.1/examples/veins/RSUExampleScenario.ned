@@ -23,10 +23,21 @@
 import org.car2x.veins.nodes.RSU;
 import org.car2x.veins.nodes.Scenario;
 import org.car2x.veins.nodes.TrafficLight;
+import org.car2x.veins.subprojects.veins_inet.VeinsInetManager;
+import simu5g.world.radio.LteChannelControl;
+import simu5g.common.carrierAggregation.CarrierAggregation;
+import simu5g.nodes.Upf;
+import simu5g.common.binder.Binder;
+import simu5g.nodes.gNodeB;
+import simu5g.nodes.NrCar;
 
 network RSUExampleScenario extends Scenario
 {
     submodules:
+        //# Veins manager module
+        veinsManager: VeinsInetManager {
+            @display("p=50,227;is=s");
+        }
         rsu[1]: RSU {
             @display("p=150,140;i=veins/sign/yellowdiamond;is=vs");
         }

@@ -3,6 +3,8 @@
 	<name>veins</name>
 	<comment></comment>
 	<projects>
+		<project>inet4.5</project>
+		<project>Simu5G-1.4.3</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>
