@@ -3,8 +3,8 @@
 	<name>MoQVeinsSim</name>
 	<comment></comment>
 	<projects>
-		<project>inet4.5</project>
-		<project>Simu5G-1.4.3</project>
+		<project>inet-4.6.0</project>
+		<project>simu5g-git</project>
 		<project>veins_inet</project>
 	</projects>
 	<buildSpec>

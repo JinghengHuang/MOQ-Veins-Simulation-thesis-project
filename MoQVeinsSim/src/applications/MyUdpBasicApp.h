@@ -6,8 +6,8 @@
 //
 
 
-#ifndef __MOQVEINS_UDPBASICAPP_H
-#define __MOQVEINS_UDPBASICAPP_H
+#ifndef __MOQVEINSSIM_MYUDPBASICAPP_H
+#define __MOQVEINSSIM_MYUDPBASICAPP_H
 
 #include <vector>
 
@@ -15,14 +15,22 @@
 #include "inet/common/clock/ClockUserModuleMixin.h"
 #include "inet/transportlayer/contract/udp/UdpSocket.h"
 
-namespace moqveins {
+using inet::L3Address;
+using inet::UdpSocket;
+using inet::clocktime_t;
+using inet::ClockUserModuleMixin;
+using inet::ClockEvent;
+using omnetpp::cMessage;
+using inet::ApplicationBase;
+using inet::Indication;
+using inet::InitStageRegistry;
 
-extern template class ClockUserModuleMixin<ApplicationBase>;
+namespace moqveinssim {
 
 /**
  * UDP application. See NED for more info.
  */
-class INET_API UdpBasicApp : public ClockUserModuleMixin<ApplicationBase>, public UdpSocket::ICallback
+class INET_API MyUdpBasicApp : public inet::ClockUserModuleMixin<ApplicationBase>, public UdpSocket::ICallback
 {
   protected:
     enum SelfMsgKinds { START = 1, SEND, STOP };
@@ -54,24 +62,24 @@ class INET_API UdpBasicApp : public ClockUserModuleMixin<ApplicationBase>, publi
     // chooses random destination address
     virtual L3Address chooseDestAddr();
     virtual void sendPacket();
-    virtual void processPacket(Packet *msg);
+    virtual void processPacket(inet::Packet *msg);
     virtual void setSocketOptions();
 
     virtual void processStart();
     virtual void processSend();
     virtual void processStop();
 
-    virtual void handleStartOperation(LifecycleOperation *operation) override;
-    virtual void handleStopOperation(LifecycleOperation *operation) override;
-    virtual void handleCrashOperation(LifecycleOperation *operation) override;
+    virtual void handleStartOperation(inet::LifecycleOperation *operation) override;
+    virtual void handleStopOperation(inet::LifecycleOperation *operation) override;
+    virtual void handleCrashOperation(inet::LifecycleOperation *operation) override;
 
-    virtual void socketDataArrived(UdpSocket *socket, Packet *packet) override;
-    virtual void socketErrorArrived(UdpSocket *socket, Indication *indication) override;
-    virtual void socketClosed(UdpSocket *socket) override;
+    virtual void socketDataArrived(inet::UdpSocket *socket, inet::Packet *packet) override;
+    virtual void socketErrorArrived(inet::UdpSocket *socket, Indication *indication) override;
+    virtual void socketClosed(inet::UdpSocket *socket) override;
 
   public:
-    UdpBasicApp() {}
-    ~UdpBasicApp();
+    MyUdpBasicApp() {}
+    ~MyUdpBasicApp();
 };
 
 } // namespace inet

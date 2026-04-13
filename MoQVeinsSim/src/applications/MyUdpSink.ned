@@ -5,16 +5,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 
-package inet.applications.udpapp;
+package moqveinssim.applications;
 
 import inet.applications.contract.IApp;
 
 //
 // Consumes and prints packets received from the ~Udp module.
 //
-simple UdpSink like IApp
+simple MyUdpSink like IApp
 {
     parameters:
+        @class(moqveinssim::MyUdpSink);
         string interfaceTableModule;   // The path to the InterfaceTable module
         double startTime @unit(s) = default(0s); // application start time
         double stopTime @unit(s) = default(-1s);  // time of finishing receiving

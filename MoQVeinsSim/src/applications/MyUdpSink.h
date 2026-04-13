@@ -5,18 +5,29 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 
-#ifndef __INET_UDPSINK_H
-#define __INET_UDPSINK_H
+#ifndef __MOQVEINSSIM_MYUDPSINK_H
+#define __MOQVEINSSIM_MYUDPSINK_H
 
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/transportlayer/contract/udp/UdpSocket.h"
 
-namespace inet {
+using inet::L3Address;
+using inet::UdpSocket;
+using omnetpp::cMessage;
+using inet::ApplicationBase;
+using inet::Indication;
+using inet::InitStageRegistry;
+using inet::LifecycleOperation;
+using inet::Packet;
+using inet::simtime_t;
+
+
+namespace moqveinssim {
 
 /**
  * Consumes and prints packets received from the Udp module. See NED for more info.
  */
-class INET_API UdpSink : public ApplicationBase, public UdpSocket::ICallback
+class INET_API MyUdpSink : public ApplicationBase, public UdpSocket::ICallback
 {
   protected:
     enum SelfMsgKinds { START = 1, STOP };
@@ -30,8 +41,8 @@ class INET_API UdpSink : public ApplicationBase, public UdpSocket::ICallback
     int numReceived = 0;
 
   public:
-    UdpSink() {}
-    virtual ~UdpSink();
+    MyUdpSink() {}
+    virtual ~MyUdpSink();
 
   protected:
     virtual void processPacket(Packet *msg);

@@ -4,23 +4,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 
-#include "inet/applications/udpapp/UdpSink.h"
+#include "./MyUdpSink.h"
 
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/packet/Packet.h"
 #include "inet/networklayer/common/L3AddressResolver.h"
-#include "inet/transportlayer/contract/udp/UdpControlInfo_m.h"
 
-namespace inet {
+using namespace inet;
+namespace moqveinssim {
 
-Define_Module(UdpSink);
+Define_Module(MyUdpSink);
 
-UdpSink::~UdpSink()
+MyUdpSink::~MyUdpSink()
 {
     cancelAndDelete(selfMsg);
 }
 
-void UdpSink::initialize(int stage)
+void MyUdpSink::initialize(int stage)
 {
     ApplicationBase::initialize(stage);
 
@@ -33,11 +33,11 @@ void UdpSink::initialize(int stage)
         stopTime = par("stopTime");
         if (stopTime >= SIMTIME_ZERO && stopTime < startTime)
             throw cRuntimeError("Invalid startTime/stopTime parameters");
-        selfMsg = new cMessage("UDPSinkTimer");
+        selfMsg = new cMessage("MyUdpSinkTimer");
     }
 }
 
-void UdpSink::handleMessageWhenUp(cMessage *msg)
+void MyUdpSink::handleMessageWhenUp(cMessage *msg)
 {
     if (msg->isSelfMessage()) {
         ASSERT(msg == selfMsg);
@@ -60,25 +60,25 @@ void UdpSink::handleMessageWhenUp(cMessage *msg)
         throw cRuntimeError("Unknown incoming gate: '%s'", msg->getArrivalGate()->getFullName());
 }
 
-void UdpSink::socketDataArrived(UdpSocket *socket, Packet *packet)
+void MyUdpSink::socketDataArrived(UdpSocket *socket, Packet *packet)
 {
     // process incoming packet
     processPacket(packet);
 }
 
-void UdpSink::socketErrorArrived(UdpSocket *socket, Indication *indication)
+void MyUdpSink::socketErrorArrived(UdpSocket *socket, Indication *indication)
 {
     EV_WARN << "Ignoring UDP error report " << indication->getName() << endl;
     delete indication;
 }
 
-void UdpSink::socketClosed(UdpSocket *socket)
+void MyUdpSink::socketClosed(UdpSocket *socket)
 {
     if (operationalState == State::STOPPING_OPERATION)
         startActiveOperationExtraTimeOrFinish(par("stopOperationExtraTime"));
 }
 
-void UdpSink::refreshDisplay() const
+void MyUdpSink::refreshDisplay() const
 {
     ApplicationBase::refreshDisplay();
 
@@ -87,13 +87,13 @@ void UdpSink::refreshDisplay() const
     getDisplayString().setTagArg("t", 0, buf);
 }
 
-void UdpSink::finish()
+void MyUdpSink::finish()
 {
     ApplicationBase::finish();
     EV_INFO << getFullPath() << ": received " << numReceived << " packets\n";
 }
 
-void UdpSink::setSocketOptions()
+void MyUdpSink::setSocketOptions()
 {
     bool receiveBroadcast = par("receiveBroadcast");
     if (receiveBroadcast)
@@ -113,7 +113,7 @@ void UdpSink::setSocketOptions()
     socket.setCallback(this);
 }
 
-void UdpSink::processStart()
+void MyUdpSink::processStart()
 {
     socket.setOutputGate(gate("socketOut"));
     socket.bind(localPort);
@@ -125,14 +125,14 @@ void UdpSink::processStart()
     }
 }
 
-void UdpSink::processStop()
+void MyUdpSink::processStop()
 {
     if (!multicastGroup.isUnspecified())
         socket.leaveMulticastGroup(multicastGroup); // FIXME should be done by socket.close()
     socket.close();
 }
 
-void UdpSink::processPacket(Packet *pk)
+void MyUdpSink::processPacket(Packet *pk)
 {
     EV_INFO << "Received packet: " << UdpSocket::getReceivedPacketInfo(pk) << endl;
     emit(packetReceivedSignal, pk);
@@ -141,7 +141,7 @@ void UdpSink::processPacket(Packet *pk)
     numReceived++;
 }
 
-void UdpSink::handleStartOperation(LifecycleOperation *operation)
+void MyUdpSink::handleStartOperation(LifecycleOperation *operation)
 {
     simtime_t start = std::max(startTime, simTime());
     if ((stopTime < SIMTIME_ZERO) || (start < stopTime) || (start == stopTime && startTime == stopTime)) {
@@ -150,7 +150,7 @@ void UdpSink::handleStartOperation(LifecycleOperation *operation)
     }
 }
 
-void UdpSink::handleStopOperation(LifecycleOperation *operation)
+void MyUdpSink::handleStopOperation(LifecycleOperation *operation)
 {
     cancelEvent(selfMsg);
     if (!multicastGroup.isUnspecified())
@@ -159,7 +159,7 @@ void UdpSink::handleStopOperation(LifecycleOperation *operation)
     delayActiveOperationFinish(par("stopOperationTimeout"));
 }
 
-void UdpSink::handleCrashOperation(LifecycleOperation *operation)
+void MyUdpSink::handleCrashOperation(LifecycleOperation *operation)
 {
     cancelEvent(selfMsg);
     if (operation->getRootModule() != getContainingNode(this)) { // closes socket when the application crashed only

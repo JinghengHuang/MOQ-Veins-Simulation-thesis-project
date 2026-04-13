@@ -3,7 +3,7 @@
 	<name>veins_catch</name>
 	<comment></comment>
 	<projects>
-		<project>inet4.5</project>
+		<project>inet4.6</project>
 		<project>veins</project>
 	</projects>
 	<buildSpec>

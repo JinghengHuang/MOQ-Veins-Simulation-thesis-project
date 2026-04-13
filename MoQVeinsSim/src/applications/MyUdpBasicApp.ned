@@ -5,7 +5,7 @@
 //
 
 
-package moqveins.applications.udpapp;
+package moqveinssim.applications;
 
 import inet.applications.contract.IApp;
 
@@ -29,6 +29,7 @@ import inet.applications.contract.IApp;
 simple MyUdpBasicApp like IApp
 {
     parameters:
+        @class(moqveinssim::MyUdpBasicApp);
         string interfaceTableModule;   // The path to the InterfaceTable module
         string clockModule = default(""); // relative path of a module that implements IClock; optional
         int localPort = default(-1);  // local port (-1: use ephemeral port)

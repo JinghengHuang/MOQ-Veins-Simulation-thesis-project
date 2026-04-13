@@ -1,23 +1,139 @@
-all: checkmakefiles
-	cd src && $(MAKE)
+#
+# OMNeT++/OMNEST Makefile for $(LIB_PREFIX)MoQVeinsSim
+#
+# This file was generated with the command:
+#  opp_makemake --make-so -f --deep -O out -KINET_4_6_0_PROJ=/home/jhuang/thesiswork/inet-4.6.0 -KSIMU5G_GIT_PROJ=/home/jhuang/thesiswork/simu5g-git -KVEINS_INET_PROJ=/home/jhuang/thesiswork/veins-git/subprojects/veins_inet -KVEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git -DINET_IMPORT -DVEINS_INET_IMPORT -I. -I$$\(INET_4_6_0_PROJ\)/src -I$$\(SIMU5G_GIT_PROJ\)/src -I$$\(VEINS_INET_PROJ\)/src -I$$\(VEINS_GIT_PROJ\)/src -Isrc -L$$\(INET_4_6_0_PROJ\)/src -L$$\(SIMU5G_GIT_PROJ\)/src -L$$\(VEINS_INET_PROJ\)/src -Lout/$$\(CONFIGNAME\)/src -lINET$$\(D\) -lsimu5g$$\(D\) -lveins_inet$$\(D\) -d src -X.
+#
 
-clean: checkmakefiles
-	cd src && $(MAKE) clean
+# Name of target to be created (-o option)
+TARGET_DIR = .
+TARGET_NAME = $(LIB_PREFIX)MoQVeinsSim$(D)
+TARGET = $(TARGET_NAME)$(SHARED_LIB_SUFFIX)
+TARGET_FILES = $(TARGET_DIR)/$(TARGET)
 
-cleanall: checkmakefiles
-	cd src && $(MAKE) MODE=release clean
-	cd src && $(MAKE) MODE=debug clean
-	rm -f src/Makefile
+# Additional object and library files to link with
+EXTRA_OBJS =
 
-makefiles:
-	cd src && opp_makemake -f --deep
+# Additional libraries (-L, -l options)
+LIBS = $(LDFLAG_LIBPATH)$(INET_4_6_0_PROJ)/src $(LDFLAG_LIBPATH)$(SIMU5G_GIT_PROJ)/src $(LDFLAG_LIBPATH)$(VEINS_INET_PROJ)/src $(LDFLAG_LIBPATH)out/$(CONFIGNAME)/src  -lINET$(D) -lsimu5g$(D) -lveins_inet$(D)
 
-checkmakefiles:
-	@if [ ! -f src/Makefile ]; then \
-	echo; \
-	echo '======================================================================='; \
-	echo 'src/Makefile does not exist. Please use "make makefiles" to generate it!'; \
-	echo '======================================================================='; \
-	echo; \
-	exit 1; \
-	fi
+# Output directory
+PROJECT_OUTPUT_DIR = out
+PROJECTRELATIVE_PATH =
+O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
+
+# Other makefile variables (-K)
+INET_4_6_0_PROJ=/home/jhuang/thesiswork/inet-4.6.0
+SIMU5G_GIT_PROJ=/home/jhuang/thesiswork/simu5g-git
+VEINS_INET_PROJ=/home/jhuang/thesiswork/veins-git/subprojects/veins_inet
+VEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git
+
+#------------------------------------------------------------------------------
+
+# Pull in OMNeT++ configuration (Makefile.inc)
+
+ifneq ("$(OMNETPP_CONFIGFILE)","")
+CONFIGFILE = $(OMNETPP_CONFIGFILE)
+else
+CONFIGFILE = $(shell opp_configfilepath)
+endif
+
+ifeq ("$(wildcard $(CONFIGFILE))","")
+$(error Config file '$(CONFIGFILE)' does not exist -- add the OMNeT++ bin directory to the path so that opp_configfilepath can be found, or set the OMNETPP_CONFIGFILE variable to point to Makefile.inc)
+endif
+
+include $(CONFIGFILE)
+
+# Simulation kernel and user interface libraries
+OMNETPP_LIBS = -loppenvir$D $(KERNEL_LIBS) $(SYS_LIBS)
+ifneq ($(PLATFORM),win32)
+LIBS += -Wl,-rpath,$(abspath $(INET_4_6_0_PROJ)/src) -Wl,-rpath,$(abspath $(SIMU5G_GIT_PROJ)/src) -Wl,-rpath,$(abspath $(VEINS_INET_PROJ)/src) -Wl,-rpath,$(abspath out/$(CONFIGNAME)/src)
+endif
+
+# we want to recompile everything if COPTS changes,
+# so we store COPTS into $COPTS_FILE (if COPTS has changed since last build)
+# and make the object files depend on it
+COPTS_FILE = $O/.last-copts
+ifneq ("$(COPTS)","$(shell cat $(COPTS_FILE) 2>/dev/null || echo '')")
+  $(shell $(MKPATH) "$O")
+  $(file >$(COPTS_FILE),$(COPTS))
+endif
+
+# On Windows, the target has additional file(s). An import lib and an optional debug symbol file is created too.
+ifeq ($(PLATFORM),win32)
+  TARGET_IMPLIB = $(TARGET_NAME)$(IMPLIB_SUFFIX)
+  TARGET_IMPDEF = $(TARGET_NAME)$(IMPDEF_SUFFIX)
+  TARGET_FILES+= $(TARGET_DIR)/$(TARGET_IMPLIB)
+  LDFLAGS+= $(LDFLAG_IMPLIB)$O/$(TARGET_IMPLIB)
+  OUT_TARGET_EXTRA_FILES = $O/$(TARGET_IMPLIB)
+  ifeq ($(TOOLCHAIN_NAME),clang-msabi)
+    ifeq ($(MODE),debug)
+      TARGET_FILES+=$(TARGET_DIR)/$(TARGET_NAME).pdb
+    endif
+  else
+    TARGET_FILES+= $(TARGET_DIR)/$(TARGET_IMPDEF)
+    LDFLAGS+= $(LDFLAG_IMPDEF)$O/$(TARGET_IMPDEF)
+    OUT_TARGET_EXTRA_FILES+= $O/$(TARGET_IMPDEF)
+  endif
+endif
+
+#------------------------------------------------------------------------------
+# User-supplied makefile fragment(s)
+-include makefrag
+
+#------------------------------------------------------------------------------
+
+# Main target
+all: $(TARGET_FILES)
+
+$(TARGET_DIR)/% :: $O/%
+	@mkdir -p $(TARGET_DIR)
+	$(Q)$(LN) $< $@
+ifeq ($(TOOLCHAIN_NAME),clang-msabi)
+	-$(Q)-$(LN) $(<:%.dll=%.lib) $(@:%.dll=%.lib) 2>/dev/null
+
+$O/$(TARGET_NAME).pdb: $O/$(TARGET)
+endif
+
+$O/$(TARGET) $(OUT_TARGET_EXTRA_FILES) &:  submakedirs $(wildcard $(EXTRA_OBJS)) Makefile $(CONFIGFILE)
+	@$(MKPATH) $O
+	@echo Creating shared library: $@
+	$(Q)$(SHLIB_LD) -o $O/$(TARGET)  $(EXTRA_OBJS) $(AS_NEEDED_OFF) $(WHOLE_ARCHIVE_ON) $(LIBS) $(WHOLE_ARCHIVE_OFF) $(OMNETPP_LIBS) $(LDFLAGS)
+	$(Q)$(SHLIB_POSTPROCESS) $O/$(TARGET)
+ifeq ($(PLATFORM),win32)
+	$(Q)llvm-ar d $O/$(TARGET_IMPLIB) $(TARGET) # WORKAROUND: throw away the first file from the archive to make the LLD generated import lib valid
+endif
+
+submakedirs:  src_dir
+
+.PHONY: all clean cleanall depend msgheaders smheaders  src
+src: src_dir
+
+src_dir:
+	cd src && $(MAKE) all
+
+msgheaders:
+	$(Q)cd src && $(MAKE) msgheaders
+
+smheaders:
+	$(Q)cd src && $(MAKE) smheaders
+
+clean:
+	$(qecho) Cleaning $(TARGET)
+	$(Q)-rm -rf $O
+	$(Q)-rm -f $(TARGET_FILES)
+	$(Q)-rm -f $(call opp_rwildcard, . , *_m.cc *_m.h *_sm.cc *_sm.h)
+	-$(Q)cd src && $(MAKE) clean
+
+cleanall:
+	$(Q)$(CLEANALL_COMMAND)
+	$(Q)-rm -rf $(PROJECT_OUTPUT_DIR)
+
+help:
+	@echo "$$HELP_SYNOPSYS"
+	@echo "$$HELP_TARGETS"
+	@echo "$$HELP_VARIABLES"
+	@echo "$$HELP_EXAMPLES"
+
+# include all dependencies
+-include $(OBJS:%=%.d) $(MSGFILES:%.msg=$O/%_m.h.d)

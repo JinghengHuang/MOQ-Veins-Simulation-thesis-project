@@ -6,7 +6,7 @@
 //
 
 
-#include "inet/applications/udpapp/UdpBasicApp.h"
+#include "./MyUdpBasicApp.h"
 
 #include "inet/applications/base/ApplicationPacket_m.h"
 #include "inet/common/ModuleAccess.h"
@@ -16,18 +16,19 @@
 #include "inet/common/packet/Packet.h"
 #include "inet/networklayer/common/FragmentationTag_m.h"
 #include "inet/networklayer/common/L3AddressResolver.h"
-#include "inet/transportlayer/contract/udp/UdpControlInfo_m.h"
 
-namespace inet {
+using namespace inet;
 
-Define_Module(UdpBasicApp);
+namespace moqveinssim {
 
-UdpBasicApp::~UdpBasicApp()
+Define_Module(MyUdpBasicApp);
+
+MyUdpBasicApp::~MyUdpBasicApp()
 {
     cancelAndDelete(selfMsg);
 }
 
-void UdpBasicApp::initialize(int stage)
+void MyUdpBasicApp::initialize(int stage)
 {
     ClockUserModuleMixin::initialize(stage);
 
@@ -49,14 +50,14 @@ void UdpBasicApp::initialize(int stage)
     }
 }
 
-void UdpBasicApp::finish()
+void MyUdpBasicApp::finish()
 {
     recordScalar("packets sent", numSent);
     recordScalar("packets received", numReceived);
     ApplicationBase::finish();
 }
 
-void UdpBasicApp::setSocketOptions()
+void MyUdpBasicApp::setSocketOptions()
 {
     int timeToLive = par("timeToLive");
     if (timeToLive != -1)
@@ -91,7 +92,7 @@ void UdpBasicApp::setSocketOptions()
     socket.setCallback(this);
 }
 
-L3Address UdpBasicApp::chooseDestAddr()
+L3Address MyUdpBasicApp::chooseDestAddr()
 {
     int k = intrand(destAddresses.size());
     if (destAddresses[k].isUnspecified() || destAddresses[k].isLinkLocal()) {
@@ -100,7 +101,7 @@ L3Address UdpBasicApp::chooseDestAddr()
     return destAddresses[k];
 }
 
-void UdpBasicApp::sendPacket()
+void MyUdpBasicApp::sendPacket()
 {
     std::ostringstream str;
     str << packetName << "-" << numSent;
@@ -118,7 +119,7 @@ void UdpBasicApp::sendPacket()
     numSent++;
 }
 
-void UdpBasicApp::processStart()
+void MyUdpBasicApp::processStart()
 {
     socket.setOutputGate(gate("socketOut"));
     const char *localAddress = par("localAddress");
@@ -150,7 +151,7 @@ void UdpBasicApp::processStart()
     }
 }
 
-void UdpBasicApp::processSend()
+void MyUdpBasicApp::processSend()
 {
     sendPacket();
     clocktime_t d = par("sendInterval");
@@ -164,12 +165,12 @@ void UdpBasicApp::processSend()
     }
 }
 
-void UdpBasicApp::processStop()
+void MyUdpBasicApp::processStop()
 {
     socket.close();
 }
 
-void UdpBasicApp::handleMessageWhenUp(cMessage *msg)
+void MyUdpBasicApp::handleMessageWhenUp(cMessage *msg)
 {
     if (msg->isSelfMessage()) {
         ASSERT(msg == selfMsg);
@@ -194,25 +195,25 @@ void UdpBasicApp::handleMessageWhenUp(cMessage *msg)
         socket.processMessage(msg);
 }
 
-void UdpBasicApp::socketDataArrived(UdpSocket *socket, Packet *packet)
+void MyUdpBasicApp::socketDataArrived(UdpSocket *socket, Packet *packet)
 {
     // process incoming packet
     processPacket(packet);
 }
 
-void UdpBasicApp::socketErrorArrived(UdpSocket *socket, Indication *indication)
+void MyUdpBasicApp::socketErrorArrived(UdpSocket *socket, Indication *indication)
 {
     EV_WARN << "Ignoring UDP error report " << indication->getName() << endl;
     delete indication;
 }
 
-void UdpBasicApp::socketClosed(UdpSocket *socket)
+void MyUdpBasicApp::socketClosed(UdpSocket *socket)
 {
     if (operationalState == State::STOPPING_OPERATION)
         startActiveOperationExtraTimeOrFinish(par("stopOperationExtraTime"));
 }
 
-void UdpBasicApp::refreshDisplay() const
+void MyUdpBasicApp::refreshDisplay() const
 {
     ApplicationBase::refreshDisplay();
 
@@ -221,7 +222,7 @@ void UdpBasicApp::refreshDisplay() const
     getDisplayString().setTagArg("t", 0, buf);
 }
 
-void UdpBasicApp::processPacket(Packet *pk)
+void MyUdpBasicApp::processPacket(Packet *pk)
 {
     emit(packetReceivedSignal, pk);
     EV_INFO << "Received packet: " << UdpSocket::getReceivedPacketInfo(pk) << endl;
@@ -229,7 +230,7 @@ void UdpBasicApp::processPacket(Packet *pk)
     numReceived++;
 }
 
-void UdpBasicApp::handleStartOperation(LifecycleOperation *operation)
+void MyUdpBasicApp::handleStartOperation(LifecycleOperation *operation)
 {
     clocktime_t start = std::max(startTime, getClockTime());
     if ((stopTime < CLOCKTIME_ZERO) || (start < stopTime) || (start == stopTime && startTime == stopTime)) {
@@ -238,14 +239,14 @@ void UdpBasicApp::handleStartOperation(LifecycleOperation *operation)
     }
 }
 
-void UdpBasicApp::handleStopOperation(LifecycleOperation *operation)
+void MyUdpBasicApp::handleStopOperation(LifecycleOperation *operation)
 {
     cancelEvent(selfMsg);
     socket.close();
     delayActiveOperationFinish(par("stopOperationTimeout"));
 }
 
-void UdpBasicApp::handleCrashOperation(LifecycleOperation *operation)
+void MyUdpBasicApp::handleCrashOperation(LifecycleOperation *operation)
 {
     cancelClockEvent(selfMsg);
     socket.destroy(); // TODO  in real operating systems, program crash detected by OS and OS closes sockets of crashed programs.
