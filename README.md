@@ -30,6 +30,22 @@ Todo: Test MoQ performance
 opp_env install inet-4.6.0 omnetpp-6.3.0 simu5g-git veins-git
 ```
 
+- To run simulation:
+
+Run OMNET++ with:
+
+```bash
+./StartOmnetPP.sh
+```
+
+then run veins(and sumo) with:
+
+```bash
+./VeinsDemo.sh
+```
+
+then run simulation from OMNET++ within project MoQVeinsSim (`./MoQVeinsSim/simulations/omnetpp.ini`)
+
 ## Module Configurations
 
 - For more precise simulation on signal path loss, uses two ray inference model as suggested in the [document](https://veins.car2x.org/documentation/modules/#tworay).
