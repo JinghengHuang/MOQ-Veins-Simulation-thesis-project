@@ -24,7 +24,11 @@ Todo: Test MoQ performance
 
 ## Development
 
-- To simplify development difficulties, implemented directly upon the base demo project provided by Veins, which simulates a traffic congestion scenario in Erlangen.
+- To install environment, use `opp_env` and use following command to install related projects:
+
+```bash
+opp_env install inet-4.6.0 omnetpp-6.3.0 simu5g-git veins-git
+```
 
 ## Module Configurations
 
