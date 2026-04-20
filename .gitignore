@@ -2,3 +2,5 @@
 .opp_env_workspace
 .env
 .vscode
+out
+results
