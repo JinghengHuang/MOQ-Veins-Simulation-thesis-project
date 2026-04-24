@@ -8,5 +8,4 @@ simple UdpDatagramSink extends UdpSink
 {
     parameters:
         @class(UdpDatagramSink);
-        string appName = default("UdpDatagramSink");
 }

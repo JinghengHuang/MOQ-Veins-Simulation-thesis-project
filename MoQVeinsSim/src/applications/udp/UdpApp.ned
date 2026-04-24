@@ -8,5 +8,4 @@ simple UdpApp extends UdpBasicApp
 {
     parameters:
         @class(UdpApp);
-        string appName = default("UdpApp");
 }

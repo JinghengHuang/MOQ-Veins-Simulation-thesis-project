@@ -32,7 +32,7 @@ PROJECTRELATIVE_PATH = src
 O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 
 # Object files for local .cc, .msg and .sm files
-OBJS = $O/applications/tcp/TcpClientApp.o $O/applications/tcp/TcpSinkApp.o $O/applications/udp/UdpApp.o $O/applications/udp/UdpDatagramSink.o
+OBJS = $O/applications/tcp/TcpClientApp.o $O/applications/tcp/TcpStatSinkApp.o $O/applications/udp/UdpApp.o $O/applications/udp/UdpDatagramSink.o
 
 # Message files
 MSGFILES =

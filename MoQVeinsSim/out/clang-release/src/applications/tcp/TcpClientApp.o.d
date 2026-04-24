@@ -1,5 +1,6 @@
 ../out/clang-release/src/applications/tcp/TcpClientApp.o: \
   applications/tcp/TcpClientApp.cc applications/tcp/TcpClientApp.h \
+  /home/jhuang/thesiswork/inet-4.6.0/src/inet/applications/tcpapp/TcpBasicClientApp.h \
   /home/jhuang/thesiswork/inet-4.6.0/src/inet/applications/tcpapp/TcpAppBase.h \
   /home/jhuang/thesiswork/inet-4.6.0/src/inet/applications/base/ApplicationBase.h \
   /home/jhuang/thesiswork/inet-4.6.0/src/inet/common/lifecycle/ModuleOperations.h \
@@ -69,6 +70,7 @@
   /home/jhuang/thesiswork/inet-4.6.0/src/inet/common/TimeTag_m.h \
   /home/jhuang/thesiswork/inet-4.6.0/src/inet/common/TagBase_m.h
 applications/tcp/TcpClientApp.h:
+/home/jhuang/thesiswork/inet-4.6.0/src/inet/applications/tcpapp/TcpBasicClientApp.h:
 /home/jhuang/thesiswork/inet-4.6.0/src/inet/applications/tcpapp/TcpAppBase.h:
 /home/jhuang/thesiswork/inet-4.6.0/src/inet/applications/base/ApplicationBase.h:
 /home/jhuang/thesiswork/inet-4.6.0/src/inet/common/lifecycle/ModuleOperations.h:
