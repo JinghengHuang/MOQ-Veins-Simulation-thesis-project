@@ -1,0 +1,60 @@
+#pragma once
+
+#include <vector>
+#include <omnetpp.h>
+#include "inet/transportlayer/contract/quic/QuicSocket.h"
+#include "inet/applications/base/ApplicationBase.h"
+#include "inet/networklayer/common/L3Address.h"
+
+
+namespace moqveinssim {
+class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::ICallback {
+    
+    public:
+        MoqPublisherApp();
+        ~MoqPublisherApp();
+    private:
+        struct TrackMeta{
+            int trackId;
+            std::string trackName;
+            int packetSize;
+            omnetpp::simtime_t sendInterval;
+            int priority;
+            long nextObjectId = 0;
+            omnetpp::cMessage *timer = nullptr;
+        };
+        enum Timer {
+            TIMER_CONNECT,
+            TIMER_RESET,
+            TIMER_LIMIT_RUNTIME
+        };
+        inet::cMessage *timerConnect;
+        inet::cMessage *timerLimitRuntime;
+        std::vector<TrackMeta> tracks;
+        std::map<int, int> trackToStreamMap;
+        inet::L3Address connectAddress;
+        unsigned int connectPort;
+        bool sendingAllowed = false;
+    protected:
+        inet::QuicSocket socket;
+        virtual void handleMessageWhenUp(inet::cMessage *msg) override;
+
+        virtual void handleStartOperation(inet::LifecycleOperation *operation) override;
+        virtual void handleStopOperation(inet::LifecycleOperation *operation) override;
+        virtual void handleCrashOperation(inet::LifecycleOperation *operation) override;
+        virtual void socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) override;
+        virtual void socketConnectionAvailable(inet::QuicSocket *socket) override { };
+        virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override { };
+        virtual void socketEstablished(inet::QuicSocket *socket) override;
+        virtual void socketClosed(inet::QuicSocket *socket) override;
+        virtual void socketDestroyed(inet::QuicSocket *socket) override { };
+
+        virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
+        virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
+        virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
+        virtual void sendTrackData(inet::cMessage* msg);
+    private:
+    
+        void handleTimeout(omnetpp::cMessage *msg);
+};
+}

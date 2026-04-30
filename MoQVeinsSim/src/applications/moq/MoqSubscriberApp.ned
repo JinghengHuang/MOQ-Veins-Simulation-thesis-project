@@ -1,9 +1,8 @@
 package moqveinssim.applications.moq;
 
-import inet.applications.quicapp.QuicClient;
+import moqveinssim.applications.base.BaseSubscriberApp;
 
-simple MoqSubscriberApp extends QuicClient {
-    @class(MoqSubscriberApp);
-    @signal[bytesReceived];
-    @statistic[bytesReceived](record=vector);
+simple MoqSubscriberApp extends BaseSubscriberApp {
+    parameters:
+        @class(MoqSubscriberApp);
 }

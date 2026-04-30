@@ -1,7 +1,7 @@
 package moqveinssim.applications.moq;
 
-import inet.applications.quicapp.QuicClient;
+import moqveinssim.applications.base.BasePublisherApp;
 
-simple MoqPublisherApp extends QuicClient {
-    @class(MoqPublisherApp);
+simple MoqPublisherApp extends BasePublisherApp {
+    @class(moqveinssim::MoqPublisherApp);
 }

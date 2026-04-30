@@ -1,8 +1,7 @@
 package moqveinssim.applications.moq;
 
-import inet.applications.quicapp.QuicClient;
-
-simple MoqRelayApp extends QuicClient {
-    @class(MoqRelayApp);
-    
+import moqveinssim.applications.base.BaseRelayApp;
+simple MoqRelayApp extends BaseRelayApp {
+    parameters:
+        @class(MoqRelayApp);
 }

@@ -32,10 +32,17 @@ PROJECTRELATIVE_PATH = src
 O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 
 # Object files for local .cc, .msg and .sm files
-OBJS = $O/applications/tcp/TcpClientApp.o $O/applications/tcp/TcpStatSinkApp.o $O/applications/udp/UdpApp.o $O/applications/udp/UdpDatagramSink.o
+OBJS = \
+    $O/applications/moq/MoqPublisherApp.o \
+    $O/applications/tcp/TcpClientApp.o \
+    $O/applications/tcp/TcpStatSinkApp.o \
+    $O/applications/udp/UdpApp.o \
+    $O/applications/udp/UdpDatagramSink.o \
+    $O/models/MoqTrackHeader_m.o
 
 # Message files
-MSGFILES =
+MSGFILES = \
+    models/MoqTrackHeader.msg
 
 # SM files
 SMFILES =
