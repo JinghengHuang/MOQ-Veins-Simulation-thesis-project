@@ -5,6 +5,7 @@ import inet.applications.contract.IApp;
 
 simple BaseSubscriberApp extends SimpleModule like IApp  {
     parameters:
+        @display("i=block/app");
         string localAddress = default(""); // Local address or empty ("")
         int localPort = default(9002); // port number to listen on
         string connectAddress = default(""); // Relay/Server address or empty ("")

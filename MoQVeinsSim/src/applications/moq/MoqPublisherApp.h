@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <omnetpp.h>
+#include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/networklayer/common/L3Address.h"
@@ -24,14 +25,14 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
             omnetpp::cMessage *timer = nullptr;
         };
         enum Timer {
-            TIMER_CONNECT,
-            TIMER_RESET,
-            TIMER_LIMIT_RUNTIME
+            TIMER_CONNECT = -1,
+            TIMER_RESET = -2,
+            TIMER_LIMIT_RUNTIME = -3
         };
         inet::cMessage *timerConnect;
         inet::cMessage *timerLimitRuntime;
-        std::vector<TrackMeta> tracks;
-        std::map<int, int> trackToStreamMap;
+        std::unordered_map<int, TrackMeta> tracks;
+        std::unordered_map<int, int> trackToStreamMap;
         inet::L3Address connectAddress;
         unsigned int connectPort;
         bool sendingAllowed = false;
@@ -52,7 +53,7 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
         virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
         virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
         virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
-        virtual void sendTrackData(inet::cMessage* msg);
+        virtual void sendTrackData();
     private:
     
         void handleTimeout(omnetpp::cMessage *msg);
