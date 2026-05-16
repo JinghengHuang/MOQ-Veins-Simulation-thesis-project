@@ -5,5 +5,5 @@ import inet.applications.contract.IApp;
 
 simple MoqSubscriberApp extends BaseSubscriberApp  like IApp {
     parameters:
-        @class(MoqSubscriberApp);
+        @class(moqveinssim::MoqSubscriberApp);
 }

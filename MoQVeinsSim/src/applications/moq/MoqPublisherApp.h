@@ -1,3 +1,10 @@
+/* --- MoqPublisherApp.h --- */
+
+/* ------------------------------------------
+Author: Jingheng Huang
+Date: 5/15/2026
+------------------------------------------ */
+
 #pragma once
 
 #include <vector>
@@ -6,6 +13,7 @@
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/networklayer/common/L3Address.h"
+#include "models/TrackInfo.h"
 
 
 namespace moqveinssim {
@@ -15,19 +23,16 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
         MoqPublisherApp();
         ~MoqPublisherApp();
     private:
-        struct TrackMeta{
-            int trackId;
-            std::string trackName;
-            int packetSize;
-            omnetpp::simtime_t sendInterval;
-            int priority;
-            long nextObjectId = 0;
-            omnetpp::cMessage *timer = nullptr;
-        };
+        omnetpp::cMessage *errorEvent = nullptr;
         enum Timer {
             TIMER_CONNECT = -1,
             TIMER_RESET = -2,
             TIMER_LIMIT_RUNTIME = -3
+        };
+        enum Event {
+            PUB_ANNOUNCE,
+            SUB_SUCCESS,
+            SUB_ERROR
         };
         inet::cMessage *timerConnect;
         inet::cMessage *timerLimitRuntime;
@@ -53,9 +58,8 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
         virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
         virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
         virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
-        virtual void sendTrackData();
-    private:
-    
+        virtual void sendTrackAnnouncementData();
+        virtual void sendTrackData(long tid);
         void handleTimeout(omnetpp::cMessage *msg);
 };
 }

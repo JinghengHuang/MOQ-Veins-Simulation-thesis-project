@@ -2,8 +2,12 @@
 
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
-#include "models/MoqTrackHeader_m.h"
+#include "veins/modules/mobility/traci/TraCIMobility.h"
+#include "models/MoqObjectChunk_m.h"
+#include "models/MoqPublisherAnnounce_m.h"
 #include <algorithm>
+
+#include <omnetpp.h>
 
 namespace moqveinssim {
 static constexpr int MOQ_OBJECT_HEADER_BYTES = 32;
@@ -26,6 +30,7 @@ MoqPublisherApp::~MoqPublisherApp() {
         cancelAndDelete(track.second.timer);
         track.second.timer = nullptr;
     }
+    errorEvent = nullptr;
 }
 
 void MoqPublisherApp::handleTimeout(omnetpp::cMessage *msg)
@@ -56,40 +61,78 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             handleTimeout(msg);
         }
         if (sendingAllowed == true){
-            auto it = tracks.find(id);
-            if (it != tracks.end()) {
-                TrackMeta& track = it->second;
-                // Send track packet
-                inet::Packet *packet = new inet::Packet("MoqTrackObjectData");
-                inet::Ptr<MoqTrackHeader> header = inet::makeShared<MoqTrackHeader>();
-                header->setChunkLength(inet::B(MOQ_OBJECT_HEADER_BYTES));
-                header->setTrackId(track.trackId);
-                header->setObjectId(track.nextObjectId);
-                header->setCreationTime(inet::simTime());
-                // packet->insertAtFront(header); No header for now, QUIC can't handle it, implement stats externally
-                tracks[id].nextObjectId += 1;
-                auto payload = inet::makeShared<inet::ByteCountChunk>(inet::B(track.packetSize));
-                packet->insertAtBack(payload);
+            std::string name = msg->getName();
+            long tid = std::stoi(name);
+            auto it = tracks.find(tid);
+            inet::Packet *packet = nullptr;
+            TrackMeta* track = nullptr;
+            switch (id)
+            {
+            case PUB_ANNOUNCE:
+                if (it != tracks.end()) {
+                    track = &it->second;
+                    // Send track packet, just announcement
+                    packet = new inet::Packet("AnnouncePacket");
+                    inet::Ptr<MoqPublisherAnnounce> header = inet::makeShared<MoqPublisherAnnounce>();
+                    header->setChunkLength(inet::B(MOQ_OBJECT_HEADER_BYTES));
+                    header->setTrackId(track->trackId);
+                    header->setTrackNamespace(track->trackNamespace.c_str());
+                    header->setTrackName(track->trackName.c_str());
+                    header->setTrackAlias(track->trackAlias.c_str());
+                    header->setPriority(track->priority);
+                    header->setSendInterval(track->sendInterval);
+                    header->setPayloadSize(track->packetSize);
+                    packet->insertAtBack(header);
 
-                // stream mapping
-                // QUIC stream id rule: 62 bit unsigned int with least significant bit meaning sender of the packet(client/server) and 2nd lowest meaning direction(uni/bi)
-                // start from 0 and +4 each time means send by client and bidirectional
-                // for each track a unique stream
-                auto iter = trackToStreamMap.find(track.trackId);
-                int nextStartStreamId = 0;
-                if (iter != trackToStreamMap.end()) {
-                    trackToStreamMap[track.trackId] = track.trackId;
-                }else{
-                    trackToStreamMap[track.trackId] = nextStartStreamId;
-                    nextStartStreamId += 4;
                 }
-                int streamId = trackToStreamMap[track.trackId];
+                break;
+            case SUB_SUCCESS:
+                /* code */
+                if (it != tracks.end()) {
+                    track = &it->second;
+                    // Send track packet with data stream
+                    packet = new inet::Packet("ObjectChunkPacket");
+                    inet::Ptr<MoqObjectChunk> header = inet::makeShared<MoqObjectChunk>();
+                    header->setChunkLength(inet::B(MOQ_OBJECT_HEADER_BYTES));
+                    header->setTrackId(track->trackId);
+                    header->setTrackAlias(track->trackAlias.c_str());
+                    header->setPriority(track->priority);
+                    header->setObjectId(track->nextObjectId);
+                    header->setGroupId(0); // for now all group is 0, will see if its necessary to implement group or only track/object is enough
+                    track->nextObjectId++;
+                    packet->insertAtBack(header);
+                    auto payload = inet::makeShared<inet::ByteCountChunk>(inet::B(track->packetSize));
+                    packet->insertAtBack(payload);
+                    // Arrange sending another packet of the same event
+                    sendTrackData(tid);
+                }
+                break;
+            case SUB_ERROR:
+                // Send track packet with data stream
+                packet = new inet::Packet("Subscibe_error");
+                packet->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+                break;
+            }
+            
+            // stream mapping
+            // QUIC stream id rule: 62 bit unsigned int with least significant bit meaning sender of the packet(client/server) and 2nd lowest meaning direction(uni/bi)
+            // start from 0 and +4 each time means send by client and bidirectional
+            // for each track a unique stream
+            auto iter = trackToStreamMap.find(tid);
+            int nextStartStreamId = 0;
+            if (iter == trackToStreamMap.end()) {
+                trackToStreamMap[tid] = nextStartStreamId;
+                nextStartStreamId += 4;
+            }
+            iter = trackToStreamMap.find(tid);
+            if (iter != trackToStreamMap.end() && track != nullptr && packet != nullptr) {
+                int streamId = iter->second;
                 packet->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
 
                 socket.send(packet);
-                EV_INFO << "sendData - track " << track.trackId << " - name " << track.trackName << " - size " << track.packetSize << " B" << " - streamId  " << streamId << std::endl;
-                EV_DEBUG << "handle message of kind " << msg->getKind() << std::endl;
+                EV_INFO << "sendData - track " << track->trackId << " - name " << track->trackName << " - size " << track->packetSize << " B" << " - streamId  " << streamId << std::endl;
             }
+            EV_DEBUG << "handle message of kind " << msg->getKind() << std::endl;
         }
     } else if (msg->arrivedOn("socketIn")) { // from QUIC
         // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
@@ -114,23 +157,30 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
     int localPort = par("localPort");
     socket.bind(localAddress, localPort);
 
-    const auto* arr = omnetpp::check_and_cast<const omnetpp::cValueArray*>(par("tracks").objectValue());
-
-    for (int i = 0; i < arr->size(); i++) {
-        auto& elem = arr->get(i);
-        const auto* map = omnetpp::check_and_cast<omnetpp::cValueMap*>(elem.objectValue());
-        TrackMeta track;
-        track.trackId = i;
-        track.trackName = (*map)["trackName"].stringValue();
-        track.packetSize = (*map)["packetSize"].intValueInUnit("B");;
-        track.sendInterval = (*map)["sendInterval"].doubleValueInUnit("s");;
-        track.priority = (*map)["priority"].intValue();
-        track.nextObjectId = 0;
-        track.timer = new omnetpp::cMessage(("trackTimer-" + std::to_string(track.trackId)).c_str());
-        track.timer->setKind(track.trackId);
-        tracks[i] = track;
-
+    const auto* arr = dynamic_cast<const omnetpp::cValueArray*>(par("tracks").objectValue());
+    // Get car name
+    std::string vId = veins::TraCIMobility().getExternalId();
+    if (arr != nullptr){
+        for (int i = 0; i < arr->size(); i++) {
+            auto& elem = arr->get(i);
+            const auto* map = dynamic_cast<const omnetpp::cValueMap*>(elem.objectValue());
+            if (map != nullptr){
+                TrackMeta track;
+                track.publisherId = i;
+                track.trackId = i;
+                track.trackNamespace = vId;
+                track.trackName = (*map)["trackName"].stringValue();
+                track.trackAlias = track.trackNamespace + "/" + track.trackName; // alias: namespace/name
+                track.packetSize = (*map)["packetSize"].intValueInUnit("B");;
+                track.sendInterval = (*map)["sendInterval"].doubleValueInUnit("s");;
+                track.priority = (*map)["priority"].intValue();
+                track.nextObjectId = 0;
+                track.timer = new omnetpp::cMessage((std::to_string(track.trackId)).c_str(), PUB_ANNOUNCE);
+                tracks[i] = track;
+            }
+        }
     }
+
     scheduleAt(par("connectTime"), timerConnect);
 }
 
@@ -151,7 +201,7 @@ void MoqPublisherApp::handleCrashOperation(inet::LifecycleOperation *operation)
 void MoqPublisherApp::socketEstablished(inet::QuicSocket *socket) {
     EV_INFO << "socketEstablished" << std::endl;
     sendingAllowed = true;
-    sendTrackData();
+    sendTrackAnnouncementData();
 }
 
 void MoqPublisherApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) {
@@ -171,12 +221,24 @@ void MoqPublisherApp::socketSendQueueDrain(inet::QuicSocket *socket)
     sendingAllowed = true;
 }
 
-// Based on track configurations, send track data
-void MoqPublisherApp::sendTrackData(){
+// Based on track configurations, send track announcement data
+void MoqPublisherApp::sendTrackAnnouncementData(){
     
     for (auto & track : tracks){
 
-        scheduleAt(inet::simTime() + track.second.sendInterval, track.second.timer);
+        scheduleAt(inet::simTime(), track.second.timer);
+    }
+}
+// Send track announcement data
+void MoqPublisherApp::sendTrackData(long tid){
+    
+    const auto track = tracks.find(tid);
+    if(track != tracks.end()){
+        scheduleAt(inet::simTime() + track->second.sendInterval, track->second.timer);
+    }else{
+        errorEvent = new omnetpp::cMessage("SUB_ERROR");
+        errorEvent->setKind(SUB_ERROR);
+        scheduleAt(inet::simTime(), errorEvent);
     }
 }
 

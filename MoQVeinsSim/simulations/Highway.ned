@@ -61,9 +61,6 @@ network Highway
         server: StandardHost {
             @display("p=660,136;is=n;i=device/server");
         }
-        relay: StandardHost {
-            @display("p=660,250;is=n;i=device/server");
-        }
         router: Router {
             @display("p=561,135;i=device/smallrouter");
         }
@@ -80,8 +77,7 @@ network Highway
         car[0]: NrCar;
 
     connections allowunconnected:
-        server.pppg++ <--> Eth10G <--> relay.pppg++;
-        relay.pppg++ <--> Eth10G <--> router.pppg++;
+        server.pppg++ <--> Eth10G <--> router.pppg++
         router.pppg++ <--> Eth10G <--> upf.filterGate;
         upf.pppg++ <--> Eth10G <--> gNodeB1.ppp;
         upf.pppg++ <--> Eth10G <--> gNodeB2.ppp;

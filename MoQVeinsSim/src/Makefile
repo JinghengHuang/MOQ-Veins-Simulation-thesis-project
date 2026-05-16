@@ -34,15 +34,20 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 # Object files for local .cc, .msg and .sm files
 OBJS = \
     $O/applications/moq/MoqPublisherApp.o \
+    $O/applications/moq/MoqRelayApp.o \
     $O/applications/tcp/TcpClientApp.o \
     $O/applications/tcp/TcpStatSinkApp.o \
     $O/applications/udp/UdpApp.o \
     $O/applications/udp/UdpDatagramSink.o \
-    $O/models/MoqTrackHeader_m.o
+    $O/models/MoqObjectChunk_m.o \
+    $O/models/MoqPublisherAnnounce_m.o \
+    $O/models/MoqSubscriber_m.o
 
 # Message files
 MSGFILES = \
-    models/MoqTrackHeader.msg
+    models/MoqObjectChunk.msg \
+    models/MoqPublisherAnnounce.msg \
+    models/MoqSubscriber.msg
 
 # SM files
 SMFILES =

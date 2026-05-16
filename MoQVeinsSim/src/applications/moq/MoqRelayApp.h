@@ -1,0 +1,73 @@
+/* --- MoqRelayApp.h --- */
+
+/* ------------------------------------------
+Author: Jingheng Huang
+Date: 5/15/2026
+------------------------------------------ */
+
+#ifndef MOQRELAYAPP_H
+#define MOQRELAYAPP_H
+
+#include <vector>
+#include <omnetpp.h>
+#include <unordered_map>
+#include "inet/transportlayer/contract/quic/QuicSocket.h"
+#include "inet/applications/base/ApplicationBase.h"
+#include "inet/networklayer/common/L3Address.h"
+#include "models/TrackInfo.h"
+
+namespace moqveinssim {
+class MoqRelayApp : public inet::ApplicationBase, public inet::QuicSocket::ICallback {
+public:
+    MoqRelayApp();
+    ~MoqRelayApp();
+
+private:
+    omnetpp::cMessage *errorEvent = nullptr;
+    enum Timer {
+        TIMER_CONNECT = -1,
+        TIMER_RESET = -2,
+        TIMER_LIMIT_RUNTIME = -3
+    };
+    enum Event {
+        PUB_ANNOUNCE,
+        SUB_SUCCESS,
+        SUB_ERROR
+    };
+    inet::cMessage *timerConnect;
+    inet::cMessage *timerLimitRuntime;
+
+    std::unordered_map<std::string, TrackMeta> publishedTracks;
+    std::unordered_map<std::string, std::vector<std::string>> subscriberByTrack;
+    // (publisherConnectionId, upstreamStreamId) -> TrackKey(alias)
+    std::unordered_map<long, std::string> upstreamStreamToTrack;
+    std::unordered_map<long, std::string> downstreamStreamBySubscriberTrack;
+    // Socket relationships
+    std::unordered_map<std::string, inet::QuicSocket*> publisherSockets;
+    std::unordered_map<std::string, inet::QuicSocket*> subscriberSockets;
+    inet::L3Address connectAddress;
+    unsigned int connectPort;
+    bool sendingAllowed = false;
+protected:
+    inet::QuicSocket socket;
+    virtual void handleMessageWhenUp(inet::cMessage *msg) override;
+
+    virtual void handleStartOperation(inet::LifecycleOperation *operation) override;
+    virtual void handleStopOperation(inet::LifecycleOperation *operation) override;
+    virtual void handleCrashOperation(inet::LifecycleOperation *operation) override;
+    virtual void socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) override;
+    virtual void socketConnectionAvailable(inet::QuicSocket *socket) override { };
+    virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override { };
+    virtual void socketEstablished(inet::QuicSocket *socket) override;
+    virtual void socketClosed(inet::QuicSocket *socket) override;
+    virtual void socketDestroyed(inet::QuicSocket *socket) override { };
+
+    virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
+    virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
+    virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
+    virtual void sendTrackAnnouncementData();
+    virtual void sendTrackData(long tid);
+    void handleTimeout(omnetpp::cMessage *msg);
+};
+}
+#endif // MOQRELAYAPP_H
