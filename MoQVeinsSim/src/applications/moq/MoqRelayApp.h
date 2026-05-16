@@ -24,6 +24,8 @@ public:
 
 private:
     omnetpp::cMessage *errorEvent = nullptr;
+
+
     enum Timer {
         TIMER_CONNECT = -1,
         TIMER_RESET = -2,
@@ -37,14 +39,10 @@ private:
     inet::cMessage *timerConnect;
     inet::cMessage *timerLimitRuntime;
 
-    std::unordered_map<std::string, TrackMeta> publishedTracks;
-    std::unordered_map<std::string, std::vector<std::string>> subscriberByTrack;
-    // (publisherConnectionId, upstreamStreamId) -> TrackKey(alias)
-    std::unordered_map<long, std::string> upstreamStreamToTrack;
-    std::unordered_map<long, std::string> downstreamStreamBySubscriberTrack;
-    // Socket relationships
-    std::unordered_map<std::string, inet::QuicSocket*> publisherSockets;
-    std::unordered_map<std::string, inet::QuicSocket*> subscriberSockets;
+    std::unordered_map<TrackKey, TrackMeta, TrackKeyHash> publishedTracks;
+    std::unordered_map<TrackKey, std::vector<std::string>, TrackKeyHash> subscriberByTrack;
+    std::unordered_map<StreamBinding, TrackKey, StreamBindingHash> socketStreamToTrack;
+    std::unordered_map<SubscriberTrackKey, StreamBinding, SubscriberTrackKeyHash> subscriberToStream;
     inet::L3Address connectAddress;
     unsigned int connectPort;
     bool sendingAllowed = false;
@@ -65,8 +63,9 @@ protected:
     virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
     virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
     virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
-    virtual void sendTrackAnnouncementData();
-    virtual void sendTrackData(long tid);
+    virtual void onSubscribe(std::string sid, std::string trackAlias, long streamId);
+    virtual void onPublish(std::string pid, TrackMeta);
+    virtual void relayTrackData(std::string trackAlias, std::string sid);
     void handleTimeout(omnetpp::cMessage *msg);
 };
 }

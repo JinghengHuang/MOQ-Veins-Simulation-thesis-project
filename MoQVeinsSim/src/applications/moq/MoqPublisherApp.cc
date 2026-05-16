@@ -10,8 +10,6 @@
 #include <omnetpp.h>
 
 namespace moqveinssim {
-static constexpr int MOQ_OBJECT_HEADER_BYTES = 32;
-
 Define_Module(MoqPublisherApp);
 
 MoqPublisherApp::MoqPublisherApp() {
@@ -74,7 +72,6 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     // Send track packet, just announcement
                     packet = new inet::Packet("AnnouncePacket");
                     inet::Ptr<MoqPublisherAnnounce> header = inet::makeShared<MoqPublisherAnnounce>();
-                    header->setChunkLength(inet::B(MOQ_OBJECT_HEADER_BYTES));
                     header->setTrackId(track->trackId);
                     header->setTrackNamespace(track->trackNamespace.c_str());
                     header->setTrackName(track->trackName.c_str());
@@ -93,7 +90,6 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     // Send track packet with data stream
                     packet = new inet::Packet("ObjectChunkPacket");
                     inet::Ptr<MoqObjectChunk> header = inet::makeShared<MoqObjectChunk>();
-                    header->setChunkLength(inet::B(MOQ_OBJECT_HEADER_BYTES));
                     header->setTrackId(track->trackId);
                     header->setTrackAlias(track->trackAlias.c_str());
                     header->setPriority(track->priority);
