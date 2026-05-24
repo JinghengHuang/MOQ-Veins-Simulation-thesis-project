@@ -22,6 +22,7 @@ import simu5g.nodes.Upf;
 import simu5g.common.binder.Binder;
 import simu5g.nodes.gNodeB;
 import simu5g.nodes.NrCar;
+import moqveinssim.nodes.QuicNrCar;
 
 import org.car2x.veins.subprojects.veins_inet.VeinsInetManager;
 
@@ -77,7 +78,7 @@ network Highway
         car[0]: NrCar;
 
     connections allowunconnected:
-        server.pppg++ <--> Eth10G <--> router.pppg++
+        server.pppg++ <--> Eth10G <--> router.pppg++;
         router.pppg++ <--> Eth10G <--> upf.filterGate;
         upf.pppg++ <--> Eth10G <--> gNodeB1.ppp;
         upf.pppg++ <--> Eth10G <--> gNodeB2.ppp;

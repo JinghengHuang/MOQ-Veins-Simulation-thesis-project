@@ -11,6 +11,7 @@ simple BaseSubscriberApp extends SimpleModule like IApp  {
         string connectAddress = default(""); // Relay/Server address or empty ("")
         int connectPort = default(9001); // Relay/Server port number
 
+        double connectTime @unit(s) = default(0.1s);
     gates:
         input socketIn;
         output socketOut;

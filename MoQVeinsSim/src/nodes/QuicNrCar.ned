@@ -12,6 +12,7 @@
 
 package moqveinssim.nodes;
 
+import inet.transportlayer.contract.IQuic;
 import inet.transportlayer.quic.Quic;
 import simu5g.nodes.NrCar;
 
@@ -29,19 +30,19 @@ module QuicNrCar extends NrCar
         bool hasQuic = default(true);
 
     submodules:
-        quic: Quic if hasQuic {
+        quic: <default(firstAvailableOrEmpty("Quic"))> like IQuic if hasQuic  {
             parameters:
-                @display("p=600,300");
+                @display("p=675,226");
         }
 
     connections allowunconnected:
-        if hasQuic {
-            // app/transport dispatcher <-> quic
-            at.out++ --> quic.appIn;
-            quic.appOut --> at.in++;
+        
+        at.out++ --> quic.appIn if hasQuic;
+        at.in++ <-- quic.appOut if hasQuic;
 
-            // quic <-> udp
-            quic.udpOut --> at.in++;
-            at.out++ --> quic.udpIn;
-        }
+        quic.udpOut --> tn.in++ if hasQuic;
+        tn.out++ --> quic.udpIn if hasQuic;
+
+        at.out++ --> tn.in++;
+        at.in++ <-- tn.out++;
 }

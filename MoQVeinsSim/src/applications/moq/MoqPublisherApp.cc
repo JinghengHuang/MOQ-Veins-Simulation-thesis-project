@@ -37,7 +37,6 @@ void MoqPublisherApp::handleTimeout(omnetpp::cMessage *msg)
     switch (msg->getKind()) {
         case TIMER_CONNECT:
             EV_INFO << "connect - address: " << connectAddress << std::endl;
-
             //socket.connect(connectAddress, connectPort, 0, 0, 0);
             socket.connect(connectAddress, connectPort);
             break;
@@ -154,8 +153,11 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
     socket.bind(localAddress, localPort);
 
     const auto* arr = dynamic_cast<const omnetpp::cValueArray*>(par("tracks").objectValue());
+    omnetpp::cModule* host = getParentModule();
     // Get car name
-    std::string vId = veins::TraCIMobility().getExternalId();
+    std::string vId = host->getFullName();
+    
+    EV_INFO << "Publisher in car " << vId << std::endl;
     if (arr != nullptr){
         for (int i = 0; i < arr->size(); i++) {
             auto& elem = arr->get(i);

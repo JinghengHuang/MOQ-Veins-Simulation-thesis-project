@@ -9,12 +9,12 @@
   
   <vehicle id="0" type="car" route="2" depart="0"/>
   <vehicle id="1" type="car" route="2" depart="5"/>
-  <vehicle id="2" type="car" route="2" depart="10"/>
+  <!-- <vehicle id="2" type="car" route="2" depart="10"/>
   <vehicle id="3" type="car" route="2" depart="15"/>
     
   <vehicle id="4" type="car" route="3" depart="20"/>
   <vehicle id="5" type="car" route="3" depart="25"/>
   <vehicle id="6" type="car" route="3" depart="30"/>
-  <vehicle id="7" type="car" route="3" depart="35"/>
+  <vehicle id="7" type="car" route="3" depart="35"/> -->
   
 </routes>

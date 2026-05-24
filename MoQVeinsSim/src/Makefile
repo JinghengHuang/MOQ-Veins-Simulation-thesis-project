@@ -35,6 +35,7 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 OBJS = \
     $O/applications/moq/MoqPublisherApp.o \
     $O/applications/moq/MoqRelayApp.o \
+    $O/applications/moq/MoqSubscriberApp.o \
     $O/applications/tcp/TcpClientApp.o \
     $O/applications/tcp/TcpStatSinkApp.o \
     $O/applications/udp/UdpApp.o \

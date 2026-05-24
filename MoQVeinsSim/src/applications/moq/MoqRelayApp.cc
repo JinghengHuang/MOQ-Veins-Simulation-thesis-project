@@ -32,15 +32,13 @@ void MoqRelayApp::handleStartOperation(inet::LifecycleOperation *operation)
 {
     EV_DEBUG << "initialize MoqRelayApp" << std::endl;
 
-    connectPort = par("connectPort");
-    connectAddress = inet::L3AddressResolver().resolve(par("connectAddress"));
     socket.setOutputGate(gate("socketOut"));
     socket.setCallback(this);
 
     inet::L3Address localAddress = inet::L3AddressResolver().resolve(par("localAddress"));
     int localPort = par("localPort");
     socket.bind(localAddress, localPort);
-    
+    socket.listen();
 }
 
 
@@ -80,6 +78,22 @@ void MoqRelayApp::socketSendQueueDrain(inet::QuicSocket *socket)
     sendingAllowed = true;
 }
 
+void MoqRelayApp::handleMessageWhenUp(omnetpp::cMessage *msg)
+{
+    EV_DEBUG << "handle message of kind " << msg->getKind() << std::endl;
+    if (msg->isSelfMessage()) {
+        int id = msg->getKind();
+        if (id == TIMER_CONNECT || id == TIMER_LIMIT_RUNTIME){
+            handleTimeout(msg);
+        }
+    } else if (msg->arrivedOn("socketIn")) { // from QUIC
+        // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
+        socket.processMessage(msg);
+        //delete msg;
+    } else { // something really strange...
+        throw omnetpp::cRuntimeError("Invalid message: %d", (int) msg->getKind());
+    }
+}
 
 void MoqRelayApp::onSubscribe(std::string sid, std::string trackAlias, long streamId){
     std::vector<std::string> trackinfo = StringUtils::splitString(trackAlias, "/");
@@ -109,8 +123,8 @@ void MoqRelayApp::onSubscribe(std::string sid, std::string trackAlias, long stre
                 
                 auto responseSubscriber = new inet::Packet("SUBSCRIBE_OK");
                 responseSubscriber->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
-                auto streamReq = responseSubscriber->addTagIfAbsent<inet::QuicStreamReq>();
-                streamReq->setStreamID(streamId); // TODO: change where to get the stream id
+                auto streamReqSub = responseSubscriber->addTagIfAbsent<inet::QuicStreamReq>();
+                streamReqSub->setStreamID(streamId); // TODO: change where to get the stream id
                 subscriberSocket->send(responseSubscriber);
                 
                 auto responsePublisher = new inet::Packet("SUBSCRIBE_OK");
@@ -121,8 +135,8 @@ void MoqRelayApp::onSubscribe(std::string sid, std::string trackAlias, long stre
                 header->setSubscriberPriority(track.priority);
                 header->setStartObjectId(track.nextObjectId);
                 responsePublisher->insertAtBack(header);
-                auto streamReq = responsePublisher->addTagIfAbsent<inet::QuicStreamReq>();
-                streamReq->setStreamID(streamId); // TODO: change where to get the stream id
+                auto streamReqPub = responsePublisher->addTagIfAbsent<inet::QuicStreamReq>();
+                streamReqPub->setStreamID(streamId); // TODO: change where to get the stream id
                 publisherSocket->send(responsePublisher);
 
             }else{
@@ -143,4 +157,13 @@ void MoqRelayApp::onPublish(std::string pid, TrackMeta){
 void MoqRelayApp::relayTrackData(std::string trackAlias, std::string sid){
     
 }
+
+void MoqRelayApp::handleTimeout(omnetpp::cMessage *msg)
+{
+    EV_DETAIL << "handle timeout of kind " << msg->getKind() << std::endl;
+    switch (msg->getKind()) {
+        
+    }
+}
+
 }
