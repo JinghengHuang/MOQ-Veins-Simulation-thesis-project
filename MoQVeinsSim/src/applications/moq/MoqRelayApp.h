@@ -41,8 +41,10 @@ private:
 
     std::unordered_map<TrackKey, TrackMeta, TrackKeyHash> publishedTracks;
     std::unordered_map<TrackKey, std::vector<std::string>, TrackKeyHash> subscriberByTrack;
-    std::unordered_map<StreamBinding, TrackKey, StreamBindingHash> socketStreamToTrack;
-    std::unordered_map<SubscriberTrackKey, StreamBinding, SubscriberTrackKeyHash> subscriberToStream;
+
+    std::unordered_map<std::string, inet::QuicSocket *> publisherSockets;
+    std::unordered_map<TrackKey, inet::QuicSocket *, TrackKeyHash> publisherSocketsByTrackKey;
+    std::unordered_map<std::string, inet::QuicSocket *> subscriberSockets;
     inet::L3Address connectAddress;
     unsigned int connectPort;
     bool sendingAllowed = false;

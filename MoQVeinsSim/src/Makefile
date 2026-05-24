@@ -39,6 +39,7 @@ OBJS = \
     $O/applications/tcp/TcpStatSinkApp.o \
     $O/applications/udp/UdpApp.o \
     $O/applications/udp/UdpDatagramSink.o \
+    $O/utils/StringUtils.o \
     $O/models/MoqObjectChunk_m.o \
     $O/models/MoqPublisherAnnounce_m.o \
     $O/models/MoqSubscriber_m.o

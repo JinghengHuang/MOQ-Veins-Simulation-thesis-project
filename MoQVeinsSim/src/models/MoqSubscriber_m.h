@@ -35,7 +35,7 @@ namespace moqveinssim {
  * <pre>
  * class MoqSubscriber extends inet::FieldsChunk
  * {
- *     long subscriberId;
+ *     string subscriberId;
  *     string trackNamespace;
  *     string trackName;
  *     long subscriberPriority;
@@ -46,7 +46,7 @@ namespace moqveinssim {
 class MoqSubscriber : public ::inet::FieldsChunk
 {
   protected:
-    long subscriberId = 0;
+    ::omnetpp::opp_string subscriberId;
     ::omnetpp::opp_string trackNamespace;
     ::omnetpp::opp_string trackName;
     long subscriberPriority = 0;
@@ -67,8 +67,8 @@ class MoqSubscriber : public ::inet::FieldsChunk
     virtual void parsimPack(omnetpp::cCommBuffer *b) const override;
     virtual void parsimUnpack(omnetpp::cCommBuffer *b) override;
 
-    virtual long getSubscriberId() const;
-    virtual void setSubscriberId(long subscriberId);
+    virtual const char * getSubscriberId() const;
+    virtual void setSubscriberId(const char * subscriberId);
 
     virtual const char * getTrackNamespace() const;
     virtual void setTrackNamespace(const char * trackNamespace);

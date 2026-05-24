@@ -204,12 +204,12 @@ void MoqSubscriber::parsimUnpack(omnetpp::cCommBuffer *b)
     doParsimUnpacking(b,this->startObjectId);
 }
 
-long MoqSubscriber::getSubscriberId() const
+const char * MoqSubscriber::getSubscriberId() const
 {
-    return this->subscriberId;
+    return this->subscriberId.c_str();
 }
 
-void MoqSubscriber::setSubscriberId(long subscriberId)
+void MoqSubscriber::setSubscriberId(const char * subscriberId)
 {
     handleChange();
     this->subscriberId = subscriberId;
@@ -395,7 +395,7 @@ const char *MoqSubscriberDescriptor::getFieldTypeString(int field) const
         field -= base->getFieldCount();
     }
     static const char *fieldTypeStrings[] = {
-        "long",    // FIELD_subscriberId
+        "string",    // FIELD_subscriberId
         "string",    // FIELD_trackNamespace
         "string",    // FIELD_trackName
         "long",    // FIELD_subscriberPriority
@@ -484,7 +484,7 @@ std::string MoqSubscriberDescriptor::getFieldValueAsString(omnetpp::any_ptr obje
     }
     MoqSubscriber *pp = omnetpp::fromAnyPtr<MoqSubscriber>(object); (void)pp;
     switch (field) {
-        case FIELD_subscriberId: return long2string(pp->getSubscriberId());
+        case FIELD_subscriberId: return oppstring2string(pp->getSubscriberId());
         case FIELD_trackNamespace: return oppstring2string(pp->getTrackNamespace());
         case FIELD_trackName: return oppstring2string(pp->getTrackName());
         case FIELD_subscriberPriority: return long2string(pp->getSubscriberPriority());
@@ -505,7 +505,7 @@ void MoqSubscriberDescriptor::setFieldValueAsString(omnetpp::any_ptr object, int
     }
     MoqSubscriber *pp = omnetpp::fromAnyPtr<MoqSubscriber>(object); (void)pp;
     switch (field) {
-        case FIELD_subscriberId: pp->setSubscriberId(string2long(value)); break;
+        case FIELD_subscriberId: pp->setSubscriberId((value)); break;
         case FIELD_trackNamespace: pp->setTrackNamespace((value)); break;
         case FIELD_trackName: pp->setTrackName((value)); break;
         case FIELD_subscriberPriority: pp->setSubscriberPriority(string2long(value)); break;
@@ -524,7 +524,7 @@ omnetpp::cValue MoqSubscriberDescriptor::getFieldValue(omnetpp::any_ptr object, 
     }
     MoqSubscriber *pp = omnetpp::fromAnyPtr<MoqSubscriber>(object); (void)pp;
     switch (field) {
-        case FIELD_subscriberId: return (omnetpp::intval_t)(pp->getSubscriberId());
+        case FIELD_subscriberId: return pp->getSubscriberId();
         case FIELD_trackNamespace: return pp->getTrackNamespace();
         case FIELD_trackName: return pp->getTrackName();
         case FIELD_subscriberPriority: return (omnetpp::intval_t)(pp->getSubscriberPriority());
@@ -545,7 +545,7 @@ void MoqSubscriberDescriptor::setFieldValue(omnetpp::any_ptr object, int field, 
     }
     MoqSubscriber *pp = omnetpp::fromAnyPtr<MoqSubscriber>(object); (void)pp;
     switch (field) {
-        case FIELD_subscriberId: pp->setSubscriberId(omnetpp::checked_int_cast<long>(value.intValue())); break;
+        case FIELD_subscriberId: pp->setSubscriberId(value.stringValue()); break;
         case FIELD_trackNamespace: pp->setTrackNamespace(value.stringValue()); break;
         case FIELD_trackName: pp->setTrackName(value.stringValue()); break;
         case FIELD_subscriberPriority: pp->setSubscriberPriority(omnetpp::checked_int_cast<long>(value.intValue())); break;

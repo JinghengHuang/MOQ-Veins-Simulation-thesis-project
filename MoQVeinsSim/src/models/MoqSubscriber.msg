@@ -5,7 +5,7 @@ namespace moqveinssim;
 
 class MoqSubscriber extends inet::FieldsChunk
 {
-    long subscriberId;
+    string subscriberId;
     string trackNamespace;
     string trackName;
     long subscriberPriority;

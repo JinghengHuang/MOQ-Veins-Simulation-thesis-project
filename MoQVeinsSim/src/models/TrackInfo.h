@@ -1,3 +1,6 @@
+/**
+ * Relay track/publisher/subscriber relation structs
+ */
 #pragma once
 
 #include <vector>
@@ -50,6 +53,10 @@ namespace moqveinssim
     struct TrackKey {
         std::string trackNamespace = "";
         std::string trackName = "";
+        TrackKey(std::string tNamespace, std::string tName){
+            trackNamespace = tNamespace;
+            trackName = tName;
+        }
         bool operator==(const TrackKey& other) const {
             return trackNamespace == other.trackNamespace
                 && trackName == other.trackName;
