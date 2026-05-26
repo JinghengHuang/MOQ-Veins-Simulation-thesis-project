@@ -57,6 +57,33 @@ void MoqSubscriberApp::handleMessageWhenUp(omnetpp::cMessage *msg)
         if (id == TIMER_CONNECT || id == TIMER_LIMIT_RUNTIME){
             handleTimeout(msg);
         }
+        if (sendingAllowed == true){
+            std::string name = msg->getName();
+            TrackMeta* track = nullptr;
+            long tid = std::stoi(name);
+            auto it = tracks.find(tid);
+            
+            if (it != tracks.end()) {
+                track = &it->second;
+                auto subscribeRequest = new inet::Packet("SUBSCRIBE");
+                subscribeRequest->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+                // TODO fill track info in the packet with MoqSubscriberMessage
+                auto iter = trackToStreamMap.find(tid);
+                int nextStartStreamId = 0;
+                if (iter == trackToStreamMap.end()) {
+                    trackToStreamMap[tid] = nextStartStreamId;
+                    nextStartStreamId += 4;
+                }
+                iter = trackToStreamMap.find(tid);
+                if (iter != trackToStreamMap.end() && track != nullptr && subscribeRequest != nullptr) {
+                    int streamId = iter->second;
+                    subscribeRequest->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
+
+                    socket.send(subscribeRequest);
+                }
+            }
+
+        }
     } else if (msg->arrivedOn("socketIn")) { // from QUIC
         // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
         socket.processMessage(msg);

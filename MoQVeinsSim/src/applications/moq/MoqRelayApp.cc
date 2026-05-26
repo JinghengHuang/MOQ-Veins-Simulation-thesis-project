@@ -89,26 +89,37 @@ void MoqRelayApp::handleMessageWhenUp(omnetpp::cMessage *msg)
     } else if (msg->arrivedOn("socketIn")) { // from QUIC
         // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
         socket.processMessage(msg);
+        if(msg->getName() == "SUBSCRIBE"){
+            EV_DEBUG << "SUBSCRIBE packet " << std::endl;
+        }
+        else if(msg->getName() == "ANNOUNCE"){
+            EV_DEBUG << "ANNOUNCE packet " << std::endl;
+            // std::string pid = "";
+            // TrackMeta tm;
+            // MoqRelayApp::onPublish(pid, tm);
+        }
         //delete msg;
     } else { // something really strange...
         throw omnetpp::cRuntimeError("Invalid message: %d", (int) msg->getKind());
     }
 }
 
-void MoqRelayApp::onSubscribe(std::string sid, std::string trackAlias, long streamId){
+TrackKey MoqRelayApp::getTrackKey(std::string trackAlias){
+    
     std::vector<std::string> trackinfo = StringUtils::splitString(trackAlias, "/");
+    if(trackinfo.size() != 2){
+        throw "Invalid track alias";
+    }
+    TrackKey tKey{trackinfo[0], trackinfo[1]};
+    return tKey;
+}
+
+void MoqRelayApp::onSubscribe(std::string sid, std::string trackAlias, long streamId){
     if(subscriberSockets.find(sid) != subscriberSockets.end()){
 
         inet::QuicSocket* subscriberSocket = subscriberSockets.find(sid)->second;
-        if(trackinfo.size() != 2){
-            // send an error message on wrong track alias format
-            auto response = new inet::Packet("SUBSCRIBE_ERROR");
-            response->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
-            auto streamReq = response->addTagIfAbsent<inet::QuicStreamReq>();
-            streamReq->setStreamID(streamId);
-            subscriberSocket->send(response);
-        }else{
-            TrackKey tKey{trackinfo[0], trackinfo[1]};
+        try{
+            TrackKey tKey = getTrackKey(trackAlias);
             // register subsciber to the topic, and send subscribe ok to subscriber, then send subsribe ok with track to publisher
             auto it = publishedTracks.find(tKey);
             auto publisherSocketIt = publisherSocketsByTrackKey.find(tKey);
@@ -146,12 +157,19 @@ void MoqRelayApp::onSubscribe(std::string sid, std::string trackAlias, long stre
                 streamReq->setStreamID(streamId);
                 subscriberSocket->send(response);
             }
+        } catch (const std::string msg) {
+
+            // send an error message on wrong track alias format
+            auto response = new inet::Packet("SUBSCRIBE_ERROR");
+            response->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+            auto streamReq = response->addTagIfAbsent<inet::QuicStreamReq>();
+            streamReq->setStreamID(streamId);
+            subscriberSocket->send(response);
         }
     }
 }
 
-void MoqRelayApp::onPublish(std::string pid, TrackMeta){
-    
+void MoqRelayApp::onPublish(std::string pid, TrackMeta tm){
 }
 
 void MoqRelayApp::relayTrackData(std::string trackAlias, std::string sid){

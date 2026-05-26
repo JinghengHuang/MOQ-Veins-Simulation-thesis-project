@@ -69,7 +69,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 if (it != tracks.end()) {
                     track = &it->second;
                     // Send track packet, just announcement
-                    packet = new inet::Packet("AnnouncePacket");
+                    packet = new inet::Packet("ANNOUNCE");
                     inet::Ptr<MoqPublisherAnnounce> header = inet::makeShared<MoqPublisherAnnounce>();
                     header->setTrackId(track->trackId);
                     header->setTrackNamespace(track->trackNamespace.c_str());
@@ -87,7 +87,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 if (it != tracks.end()) {
                     track = &it->second;
                     // Send track packet with data stream
-                    packet = new inet::Packet("ObjectChunkPacket");
+                    packet = new inet::Packet("TRACK_OBJ");
                     inet::Ptr<MoqObjectChunk> header = inet::makeShared<MoqObjectChunk>();
                     header->setTrackId(track->trackId);
                     header->setTrackAlias(track->trackAlias.c_str());
@@ -103,9 +103,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 }
                 break;
             case SUB_ERROR:
-                // Send track packet with data stream
-                packet = new inet::Packet("Subscibe_error");
-                packet->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+                // Do nothing on error packet
                 break;
             }
             
@@ -151,6 +149,7 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
     inet::L3Address localAddress = inet::L3AddressResolver().resolve(par("localAddress"));
     int localPort = par("localPort");
     socket.bind(localAddress, localPort);
+    socket.listen();
 
     const auto* arr = dynamic_cast<const omnetpp::cValueArray*>(par("tracks").objectValue());
     omnetpp::cModule* host = getParentModule();

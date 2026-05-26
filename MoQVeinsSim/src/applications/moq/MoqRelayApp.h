@@ -52,6 +52,8 @@ protected:
     inet::QuicSocket socket;
     virtual void handleMessageWhenUp(inet::cMessage *msg) override;
 
+    TrackKey getTrackKey(std::string trackAlias);
+
     virtual void handleStartOperation(inet::LifecycleOperation *operation) override;
     virtual void handleStopOperation(inet::LifecycleOperation *operation) override;
     virtual void handleCrashOperation(inet::LifecycleOperation *operation) override;
