@@ -87,16 +87,12 @@ void MoqRelayApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             handleTimeout(msg);
         }
     } else if (msg->arrivedOn("socketIn")) { // from QUIC
-        // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
         socket.processMessage(msg);
         if(msg->getName() == "SUBSCRIBE"){
             EV_DEBUG << "SUBSCRIBE packet " << std::endl;
         }
         else if(msg->getName() == "ANNOUNCE"){
             EV_DEBUG << "ANNOUNCE packet " << std::endl;
-            // std::string pid = "";
-            // TrackMeta tm;
-            // MoqRelayApp::onPublish(pid, tm);
         }
         //delete msg;
     } else { // something really strange...
