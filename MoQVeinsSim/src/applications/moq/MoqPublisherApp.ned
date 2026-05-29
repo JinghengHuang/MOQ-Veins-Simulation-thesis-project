@@ -5,6 +5,6 @@ import inet.applications.contract.IApp;
 
 simple MoqPublisherApp extends BasePublisherApp like IApp {
     parameters:
-        @class(moqveinssim::MoqPublisherApp);
+        @class(::moqveinssim::MoqPublisherApp);
         object tracks = default([]); // list of tracks
 }

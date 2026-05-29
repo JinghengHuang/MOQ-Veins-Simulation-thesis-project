@@ -5,5 +5,6 @@ import inet.applications.contract.IApp;
 
 simple MoqSubscriberApp extends BaseSubscriberApp  like IApp {
     parameters:
-        @class(moqveinssim::MoqSubscriberApp);
+        @class(::moqveinssim::MoqSubscriberApp);
+        object tracks = default([]); // list of tracks to subscribe to
 }

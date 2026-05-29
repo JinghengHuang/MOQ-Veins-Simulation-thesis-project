@@ -1,0 +1,2 @@
+#! /bin/sh
+cd ../.. && ./runtest moq_announce.test

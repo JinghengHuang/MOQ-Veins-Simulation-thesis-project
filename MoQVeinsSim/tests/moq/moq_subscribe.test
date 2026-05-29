@@ -1,0 +1,86 @@
+%description:
+Subscriber sends SUBSCRIBE after publisher has announced a track.
+Relay must:
+  1. Register the subscriber (logged as "Subscriber ... subscribed to ...")
+  2. Send SUBSCRIBE_OK back to the subscriber
+  3. Forward SUBSCRIBE_OK with track details to the publisher
+
+Publisher connectTime = 0.2s, subscriber connectTime = 0.8s so the
+ANNOUNCE is guaranteed to be processed before the SUBSCRIBE arrives.
+
+%file: test.ned
+
+import inet.node.inet.StandardHost;
+import inet.node.ethernet.Eth100M;
+import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
+
+network TestMoqSubscribe
+{
+    submodules:
+        configurator: Ipv4NetworkConfigurator;
+        relay: StandardHost;
+        publisher: StandardHost;
+        subscriber: StandardHost;
+    connections:
+        publisher.ethg++  <--> Eth100M <--> relay.ethg++;
+        subscriber.ethg++ <--> Eth100M <--> relay.ethg++;
+}
+
+%inifile: omnetpp.ini
+
+[General]
+network = TestMoqSubscribe
+sim-time-limit = 5s
+cmdenv-express-mode = false
+cmdenv-event-banners = false
+**.cmdenv-log-level = INFO
+cmdenv-log-prefix = "%N: "
+
+**.arp.retryCount = 0
+**.arp.retryTimeout = 100ms
+
+**.quic.initialMaxData = 1GB
+**.quic.initialMaxStreamData = 1GB
+**.quic.bundleAckForNonAckElicitingPackets = true
+
+# --- Relay ---
+*.relay.hasQuic = true
+*.relay.quic.typename = "Quic"
+*.relay.numApps = 1
+*.relay.app[0].typename = "moqveinssim.applications.moq.MoqRelayApp"
+*.relay.app[0].localAddress = ""
+*.relay.app[0].localPort = 9001
+
+# --- Publisher ---
+*.publisher.hasQuic = true
+*.publisher.quic.typename = "Quic"
+*.publisher.numApps = 1
+*.publisher.app[0].typename = "moqveinssim.applications.moq.MoqPublisherApp"
+*.publisher.app[0].localAddress = ""
+*.publisher.app[0].localPort = 9000
+*.publisher.app[0].connectAddress = "relay"
+*.publisher.app[0].connectPort = 9001
+*.publisher.app[0].connectTime = 0.2s
+*.publisher.app[0].tracks = [{trackName: "BBox", packetSize: 50B, sendInterval: 1s, priority: 0}]
+
+# --- Subscriber (connects later so announce is already registered) ---
+*.subscriber.hasQuic = true
+*.subscriber.quic.typename = "Quic"
+*.subscriber.numApps = 1
+*.subscriber.app[0].typename = "moqveinssim.applications.moq.MoqSubscriberApp"
+*.subscriber.app[0].localAddress = ""
+*.subscriber.app[0].localPort = 9002
+*.subscriber.app[0].connectAddress = "relay"
+*.subscriber.app[0].connectPort = 9001
+*.subscriber.app[0].connectTime = 0.8s
+*.subscriber.app[0].tracks = [{trackNamespace: "publisher", trackName: "BBox", startObjectId: 0, subscriberPriority: 0}]
+
+%subst: /\x1B\[[0-9;]*m//
+
+%# Relay registers the publisher's track
+%contains-regex: stdout
+.*Registered track publisher/BBox from publisher 0.*
+
+%# Relay registers the subscriber
+%contains-regex: stdout
+.*Subscriber subscriber subscribed to publisher/BBox.*

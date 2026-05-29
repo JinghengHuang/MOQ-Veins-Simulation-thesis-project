@@ -1,0 +1,2 @@
+
+@namespace(moq_announce);

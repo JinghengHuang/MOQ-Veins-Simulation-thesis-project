@@ -4,5 +4,5 @@ import moqveinssim.applications.base.BaseRelayApp;
 import inet.applications.contract.IApp;
 simple MoqRelayApp extends BaseRelayApp like IApp  {
     parameters:
-        @class(moqveinssim::MoqRelayApp);
+        @class(::moqveinssim::MoqRelayApp);
 }

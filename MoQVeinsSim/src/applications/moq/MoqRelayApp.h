@@ -14,6 +14,7 @@ Date: 5/15/2026
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/networklayer/common/L3Address.h"
+#include "inet/common/socket/SocketMap.h"
 #include "models/TrackInfo.h"
 
 namespace moqveinssim {
@@ -50,6 +51,8 @@ private:
     bool sendingAllowed = false;
 protected:
     inet::QuicSocket socket;
+    inet::SocketMap socketMap;
+
     virtual void handleMessageWhenUp(inet::cMessage *msg) override;
 
     TrackKey getTrackKey(std::string trackAlias);
@@ -57,9 +60,9 @@ protected:
     virtual void handleStartOperation(inet::LifecycleOperation *operation) override;
     virtual void handleStopOperation(inet::LifecycleOperation *operation) override;
     virtual void handleCrashOperation(inet::LifecycleOperation *operation) override;
-    virtual void socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) override;
-    virtual void socketConnectionAvailable(inet::QuicSocket *socket) override { };
-    virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override { };
+    virtual void socketDataArrived(inet::QuicSocket* peerSocket, inet::Packet *packet) override;
+    virtual void socketConnectionAvailable(inet::QuicSocket *socket) override;
+    virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override;
     virtual void socketEstablished(inet::QuicSocket *socket) override;
     virtual void socketClosed(inet::QuicSocket *socket) override;
     virtual void socketDestroyed(inet::QuicSocket *socket) override { };

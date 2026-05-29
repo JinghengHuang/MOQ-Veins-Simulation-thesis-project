@@ -5,6 +5,7 @@
 #include "veins/modules/mobility/traci/TraCIMobility.h"
 #include "models/MoqObjectChunk_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
+#include "models/MoqSubscriber_m.h"
 #include <algorithm>
 
 #include <omnetpp.h>
@@ -66,8 +67,17 @@ void MoqSubscriberApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             if (it != tracks.end()) {
                 track = &it->second;
                 auto subscribeRequest = new inet::Packet("SUBSCRIBE");
-                subscribeRequest->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
-                // TODO fill track info in the packet with MoqSubscriberMessage
+
+                std::string vId = getParentModule()->getFullName();
+                inet::Ptr<MoqSubscriber> subHeader = inet::makeShared<MoqSubscriber>();
+                subHeader->setSubscriberId(vId.c_str());
+                subHeader->setTrackNamespace(track->trackNamespace.c_str());
+                subHeader->setTrackName(track->trackName.c_str());
+                subHeader->setSubscriberPriority(track->priority);
+                subHeader->setStartObjectId(0);
+                subHeader->setChunkLength(inet::B(64));
+                subscribeRequest->insertAtBack(subHeader);
+
                 auto iter = trackToStreamMap.find(tid);
                 int nextStartStreamId = 0;
                 if (iter == trackToStreamMap.end()) {
@@ -96,7 +106,7 @@ void MoqSubscriberApp::handleMessageWhenUp(omnetpp::cMessage *msg)
 
 void MoqSubscriberApp::handleStartOperation(inet::LifecycleOperation *operation)
 {
-    EV_DEBUG << "initialize MoqPublisherApp" << std::endl;
+    EV_DEBUG << "initialize MoqSubscriberApp" << std::endl;
 
     connectPort = par("connectPort");
     connectAddress = inet::L3AddressResolver().resolve(par("connectAddress"));
@@ -106,6 +116,25 @@ void MoqSubscriberApp::handleStartOperation(inet::LifecycleOperation *operation)
     inet::L3Address localAddress = inet::L3AddressResolver().resolve(par("localAddress"));
     int localPort = par("localPort");
     socket.bind(localAddress, localPort);
+
+    std::string vId = getParentModule()->getFullName();
+    const auto* arr = dynamic_cast<const omnetpp::cValueArray*>(par("tracks").objectValue());
+    if (arr != nullptr) {
+        for (int i = 0; i < arr->size(); i++) {
+            const auto* map = dynamic_cast<const omnetpp::cValueMap*>(arr->get(i).objectValue());
+            if (map != nullptr) {
+                TrackMeta track;
+                track.trackId        = i;
+                track.trackNamespace = (*map)["trackNamespace"].stringValue();
+                track.trackName      = (*map)["trackName"].stringValue();
+                track.trackAlias     = track.trackNamespace + "/" + track.trackName;
+                track.priority       = (*map)["subscriberPriority"].intValue();
+                track.nextObjectId   = (*map)["startObjectId"].intValue();
+                track.timer = new omnetpp::cMessage(std::to_string(i).c_str(), PUB_ANNOUNCE);
+                tracks[i] = track;
+            }
+        }
+    }
 
     scheduleAt(par("connectTime"), timerConnect);
 }

@@ -1,0 +1,98 @@
+%description:
+Full MoQ handshake: publisher announces two tracks, subscriber subscribes
+to both.  Verifies the complete relay handshake sequence in order:
+  1. Publisher connects and announces BBox and PCloud tracks
+  2. Relay registers both tracks and sends ANNOUNCE_OK for each
+  3. Subscriber connects and subscribes to both tracks
+  4. Relay finds each track, replies SUBSCRIBE_OK to subscriber,
+     and forwards SUBSCRIBE_OK with track details to publisher
+
+Two-track scenario exercises that the relay's unordered_maps handle
+multiple entries independently.
+
+%file: test.ned
+
+import inet.node.inet.StandardHost;
+import inet.node.ethernet.Eth100M;
+import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
+
+network TestMoqFullFlow
+{
+    submodules:
+        configurator: Ipv4NetworkConfigurator;
+        relay: StandardHost;
+        publisher: StandardHost;
+        subscriber: StandardHost;
+    connections:
+        publisher.ethg++  <--> Eth100M <--> relay.ethg++;
+        subscriber.ethg++ <--> Eth100M <--> relay.ethg++;
+}
+
+%inifile: omnetpp.ini
+
+[General]
+network = TestMoqFullFlow
+sim-time-limit = 5s
+cmdenv-express-mode = false
+cmdenv-event-banners = false
+**.cmdenv-log-level = INFO
+cmdenv-log-prefix = "%N: "
+
+**.arp.retryCount = 0
+**.arp.retryTimeout = 100ms
+
+**.quic.initialMaxData = 1GB
+**.quic.initialMaxStreamData = 1GB
+**.quic.bundleAckForNonAckElicitingPackets = true
+
+# --- Relay ---
+*.relay.hasQuic = true
+*.relay.quic.typename = "Quic"
+*.relay.numApps = 1
+*.relay.app[0].typename = "moqveinssim.applications.moq.MoqRelayApp"
+*.relay.app[0].localAddress = ""
+*.relay.app[0].localPort = 9001
+
+# --- Publisher: two tracks ---
+*.publisher.hasQuic = true
+*.publisher.quic.typename = "Quic"
+*.publisher.numApps = 1
+*.publisher.app[0].typename = "moqveinssim.applications.moq.MoqPublisherApp"
+*.publisher.app[0].localAddress = ""
+*.publisher.app[0].localPort = 9000
+*.publisher.app[0].connectAddress = "relay"
+*.publisher.app[0].connectPort = 9001
+*.publisher.app[0].connectTime = 0.2s
+*.publisher.app[0].tracks = [{trackName: "BBox", packetSize: 50B, sendInterval: 1s, priority: 0}, {trackName: "PCloud", packetSize: 300000B, sendInterval: 2s, priority: 1}]
+
+# --- Subscriber: subscribe to both tracks ---
+*.subscriber.hasQuic = true
+*.subscriber.quic.typename = "Quic"
+*.subscriber.numApps = 1
+*.subscriber.app[0].typename = "moqveinssim.applications.moq.MoqSubscriberApp"
+*.subscriber.app[0].localAddress = ""
+*.subscriber.app[0].localPort = 9002
+*.subscriber.app[0].connectAddress = "relay"
+*.subscriber.app[0].connectPort = 9001
+*.subscriber.app[0].connectTime = 0.8s
+*.subscriber.app[0].tracks = [{trackNamespace: "publisher", trackName: "BBox", startObjectId: 0, subscriberPriority: 0}, {trackNamespace: "publisher", trackName: "PCloud", startObjectId: 0, subscriberPriority: 1}]
+
+%subst: /\x1B\[[0-9;]*m//
+
+%# Both tracks registered by the relay
+%contains-regex: stdout
+.*Registered track publisher/BBox from publisher 0.*
+
+%contains-regex: stdout
+.*Registered track publisher/PCloud from publisher 0.*
+
+%# Both subscriptions handled
+%contains-regex: stdout
+.*Subscriber subscriber subscribed to publisher/BBox.*
+
+%contains-regex: stdout
+.*Subscriber subscriber subscribed to publisher/PCloud.*
+
+%# No SUBSCRIBE_ERROR should appear
+%not-contains: stdout
+SUBSCRIBE_ERROR

@@ -78,6 +78,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     header->setPriority(track->priority);
                     header->setSendInterval(track->sendInterval);
                     header->setPayloadSize(track->packetSize);
+                    header->setChunkLength(inet::B(100));
                     packet->insertAtBack(header);
 
                 }

@@ -1,0 +1,69 @@
+%description:
+Publisher sends ANNOUNCE to relay.
+Relay must register the track (logged as "Registered track ...") and
+reply with ANNOUNCE_OK on the same QUIC stream.
+
+%file: test.ned
+
+import inet.node.inet.StandardHost;
+import inet.node.ethernet.Eth100M;
+import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
+
+network TestMoqAnnounce
+{
+    submodules:
+        configurator: Ipv4NetworkConfigurator;
+        relay: StandardHost;
+        publisher: StandardHost;
+    connections:
+        publisher.ethg++ <--> Eth100M <--> relay.ethg++;
+}
+
+%inifile: omnetpp.ini
+
+[General]
+network = TestMoqAnnounce
+sim-time-limit = 3s
+cmdenv-express-mode = false
+cmdenv-event-banners = false
+**.cmdenv-log-level = INFO
+cmdenv-log-prefix = "%N: "
+
+**.arp.retryCount = 0
+**.arp.retryTimeout = 100ms
+
+# QUIC flow-control limits large enough not to block
+**.quic.initialMaxData = 1GB
+**.quic.initialMaxStreamData = 1GB
+**.quic.bundleAckForNonAckElicitingPackets = true
+
+# --- Relay ---
+*.relay.hasQuic = true
+*.relay.quic.typename = "Quic"
+*.relay.numApps = 1
+*.relay.app[0].typename = "moqveinssim.applications.moq.MoqRelayApp"
+*.relay.app[0].localAddress = ""
+*.relay.app[0].localPort = 9001
+
+# --- Publisher ---
+*.publisher.hasQuic = true
+*.publisher.quic.typename = "Quic"
+*.publisher.numApps = 1
+*.publisher.app[0].typename = "moqveinssim.applications.moq.MoqPublisherApp"
+*.publisher.app[0].localAddress = ""
+*.publisher.app[0].localPort = 9000
+*.publisher.app[0].connectAddress = "relay"
+*.publisher.app[0].connectPort = 9001
+*.publisher.app[0].connectTime = 0.2s
+*.publisher.app[0].tracks = [{trackName: "BBox", packetSize: 50B, sendInterval: 1s, priority: 0}]
+
+%# Strip ANSI colour codes from output
+%subst: /\x1B\[[0-9;]*m//
+
+%# Relay must log successful track registration
+%contains-regex: stdout
+.*Registered track publisher/BBox from publisher 0.*
+
+%# Relay must have accepted a connection before data arrives
+%contains-regex: stdout
+.*Accepted connection.*
