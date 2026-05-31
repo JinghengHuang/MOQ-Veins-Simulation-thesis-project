@@ -7,11 +7,11 @@ Setting up Cmdenv...
 Loading NED files from .:  2
 Loading NED files from /home/jhuang/thesiswork/inet-4.6.0/src:  1245
 Loading NED files from /home/jhuang/thesiswork/simu5g-git/src:  163
-Loading NED files from /mnt/d/Work/Thesis/MoQVeinsSim/tests/moq/veins_compat:  53
+Loading NED files from /mnt/d/Work/Thesis/MoQVeinsSim/tests/moq/veins_compat:  44
 Loading NED files from /mnt/d/Work/Thesis/MoQVeinsSim/src:  12
 
 Preparing for running configuration General, run #0...
-Assigned runID=General-0-20260528-18:21:01-41558
+Assigned runID=General-0-20260529-15:24:28-1202311
 Setting up network "TestMoqSubscribe"...
 Initializing...
 egressTC: Reconnecting gates: TestMoqSubscribe.relay.eth[0].upperLayerIn --> TestMoqSubscribe.relay.eth[0].queue.in

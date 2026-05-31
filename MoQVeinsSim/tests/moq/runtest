@@ -1,8 +1,18 @@
 #!/bin/bash
 # Run MoQ opp_test unit tests.
-# Usage:  ./runtest [test-file(s)]   (defaults to all *.test in this directory)
+# Usage:  ./runtest [--debug|-d] [test-file(s)]   (defaults to all *.test in this directory)
 set -e
 cd "$(dirname "$0")"
+
+# --- parse flags -----------------------------------------------------------
+DEBUG=0
+TEST_FILES_ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --debug|-d) DEBUG=1 ;;
+        *) TEST_FILES_ARGS+=("$arg") ;;
+    esac
+done
 
 # --- paths -----------------------------------------------------------------
 OMNETPP=/home/jhuang/omnetpp/omnetpp-6.3.0
@@ -11,7 +21,14 @@ SIMU5G=/home/jhuang/thesiswork/simu5g-git
 VEINS=/home/jhuang/thesiswork/veins-git
 VEINS_INET=${VEINS}/subprojects/veins_inet
 MOQSIM=/mnt/d/Work/Thesis/MoQVeinsSim
-OPP_RUN=${OMNETPP}/bin/opp_run
+
+if [ "$DEBUG" -eq 1 ]; then
+    OPP_RUN=${OMNETPP}/bin/opp_run_dbg
+    MOQSIM_LIB="${MOQSIM}/out/clang-debug/src/MoQVeinsSim"
+else
+    OPP_RUN=${OMNETPP}/bin/opp_run
+    MOQSIM_LIB="${MOQSIM}/out/clang-release/src/MoQVeinsSim"
+fi
 
 # Source the OMNeT++ environment (sets PATH, LD_LIBRARY_PATH, PYTHONPATH, etc.)
 # shellcheck disable=SC1091
@@ -35,26 +52,28 @@ VEINS_COMPAT="${MOQSIM}/tests/moq/veins_compat"
 NED_PATH=".:${INET}/src:${SIMU5G}/src:${VEINS_COMPAT}:${MOQSIM}/src"
 
 # --- shared libraries to load ----------------------------------------------
-# opp_run -l <path> prepends "lib" automatically, so strip it from each name.
+# opp_run / opp_run_dbg resolve the library suffix (_dbg) automatically,
+# so just pass the base name; the correct libveins-git[_dbg].so is picked up.
 LOAD_LIBS=(
     "-l" "${INET}/src/INET"
     "-l" "${SIMU5G}/src/simu5g"
-    "-l" "${VEINS}/src/veins"
+    "-l" "${VEINS}/src/veins-git"
     "-l" "${VEINS_INET}/src/veins_inet"
-    "-l" "${MOQSIM}/out/clang-release/src/MoQVeinsSim"
+    "-l" "${MOQSIM_LIB}"
 )
 
 # Build one string of extra arguments for opp_run
 EXTRA_ARGS="${LOAD_LIBS[*]} -n ${NED_PATH}"
 
 # --- select test files -----------------------------------------------------
-if [ "$#" -gt 0 ]; then
-    TEST_FILES=("$@")
+if [ "${#TEST_FILES_ARGS[@]}" -gt 0 ]; then
+    TEST_FILES=("${TEST_FILES_ARGS[@]}")
 else
     TEST_FILES=(*.test)
 fi
 
-echo "Running ${#TEST_FILES[@]} test(s): ${TEST_FILES[*]}"
+MODE_LABEL=$([ "$DEBUG" -eq 1 ] && echo "debug" || echo "release")
+echo "Running ${#TEST_FILES[@]} test(s) [${MODE_LABEL}]: ${TEST_FILES[*]}"
 echo "---"
 
 mkdir -p work

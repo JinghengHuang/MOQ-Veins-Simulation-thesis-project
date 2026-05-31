@@ -14,10 +14,10 @@ namespace moqveinssim {
 Define_Module(MoqSubscriberApp);
 
 MoqSubscriberApp::MoqSubscriberApp() {
-    timerConnect = new inet::cMessage("MOQ Publisher Timer - Connect");
+    timerConnect = new inet::cMessage("MOQ Subscriber Timer - Connect");
     timerConnect->setKind(TIMER_CONNECT);
 
-    timerLimitRuntime = new inet::cMessage("MOQ Publisher Timer - Runtime limit");
+    timerLimitRuntime = new inet::cMessage("MOQ Subscriber Timer - Runtime limit");
     timerLimitRuntime->setKind(TIMER_LIMIT_RUNTIME);
 }
 

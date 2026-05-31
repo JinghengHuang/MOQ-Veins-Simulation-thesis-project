@@ -2,7 +2,7 @@
 # OMNeT++/OMNEST Makefile for $(LIB_PREFIX)MoQVeinsSim
 #
 # This file was generated with the command:
-#  opp_makemake --make-so -f --deep -O out -KINET_4_6_0_PROJ=/home/jhuang/thesiswork/inet-4.6.0 -KSIMU5G_GIT_PROJ=/home/jhuang/thesiswork/simu5g-git -KVEINS_INET_PROJ=/home/jhuang/thesiswork/veins-git/subprojects/veins_inet -KVEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git -DINET_IMPORT -DVEINS_INET_IMPORT -I. -I$$\(INET_4_6_0_PROJ\)/src -I$$\(SIMU5G_GIT_PROJ\)/src -I$$\(VEINS_INET_PROJ\)/src -I$$\(VEINS_GIT_PROJ\)/src -Isrc -L$$\(INET_4_6_0_PROJ\)/src -L$$\(SIMU5G_GIT_PROJ\)/src -L$$\(VEINS_INET_PROJ\)/src -Lout/$$\(CONFIGNAME\)/src -lINET$$\(D\) -lsimu5g$$\(D\) -lveins_inet$$\(D\) -d src -X.
+#  opp_makemake --make-so -f --deep -O out -KINET_4_6_0_PROJ=/home/jhuang/thesiswork/inet-4.6.0 -KVEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git -KSIMU5G_GIT_PROJ=/home/jhuang/thesiswork/simu5g-git -KVEINS_INET_PROJ=/home/jhuang/thesiswork/veins-git/subprojects/veins_inet -DINET_IMPORT -DVEINS_IMPORT -DVEINS_INET_IMPORT -I. -I$$\(INET_4_6_0_PROJ\)/src -I$$\(VEINS_GIT_PROJ\)/src -Isrc -I$$\(SIMU5G_GIT_PROJ\)/src -I$$\(VEINS_GIT_PROJ\)/subprojects/veins_inet/src -L$$\(INET_4_6_0_PROJ\)/src -L$$\(VEINS_GIT_PROJ\)/src -L$$\(SIMU5G_GIT_PROJ\)/src -L$$\(VEINS_GIT_PROJ\)/subprojects/veins_inet/src -Lout/$$\(CONFIGNAME\)/src -lINET$$\(D\) -lveins-git$$\(D\) -lsimu5g$$\(D\) -lveins_inet$$\(D\) -d src -X.
 #
 
 # Name of target to be created (-o option)
@@ -15,7 +15,7 @@ TARGET_FILES = $(TARGET_DIR)/$(TARGET)
 EXTRA_OBJS =
 
 # Additional libraries (-L, -l options)
-LIBS = $(LDFLAG_LIBPATH)$(INET_4_6_0_PROJ)/src $(LDFLAG_LIBPATH)$(SIMU5G_GIT_PROJ)/src $(LDFLAG_LIBPATH)$(VEINS_INET_PROJ)/src $(LDFLAG_LIBPATH)out/$(CONFIGNAME)/src  -lINET$(D) -lsimu5g$(D) -lveins_inet$(D)
+LIBS = $(LDFLAG_LIBPATH)$(INET_4_6_0_PROJ)/src $(LDFLAG_LIBPATH)$(VEINS_GIT_PROJ)/src $(LDFLAG_LIBPATH)$(SIMU5G_GIT_PROJ)/src $(LDFLAG_LIBPATH)$(VEINS_GIT_PROJ)/subprojects/veins_inet/src $(LDFLAG_LIBPATH)out/$(CONFIGNAME)/src  -lINET$(D) -lveins-git$(D) -lsimu5g$(D) -lveins_inet$(D)
 
 # Output directory
 PROJECT_OUTPUT_DIR = out
@@ -24,9 +24,9 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 
 # Other makefile variables (-K)
 INET_4_6_0_PROJ=/home/jhuang/thesiswork/inet-4.6.0
+VEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git
 SIMU5G_GIT_PROJ=/home/jhuang/thesiswork/simu5g-git
 VEINS_INET_PROJ=/home/jhuang/thesiswork/veins-git/subprojects/veins_inet
-VEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git
 
 #------------------------------------------------------------------------------
 
@@ -47,7 +47,7 @@ include $(CONFIGFILE)
 # Simulation kernel and user interface libraries
 OMNETPP_LIBS = -loppenvir$D $(KERNEL_LIBS) $(SYS_LIBS)
 ifneq ($(PLATFORM),win32)
-LIBS += -Wl,-rpath,$(abspath $(INET_4_6_0_PROJ)/src) -Wl,-rpath,$(abspath $(SIMU5G_GIT_PROJ)/src) -Wl,-rpath,$(abspath $(VEINS_INET_PROJ)/src) -Wl,-rpath,$(abspath out/$(CONFIGNAME)/src)
+LIBS += -Wl,-rpath,$(abspath $(INET_4_6_0_PROJ)/src) -Wl,-rpath,$(abspath $(VEINS_GIT_PROJ)/src) -Wl,-rpath,$(abspath $(SIMU5G_GIT_PROJ)/src) -Wl,-rpath,$(abspath $(VEINS_GIT_PROJ)/subprojects/veins_inet/src) -Wl,-rpath,$(abspath out/$(CONFIGNAME)/src)
 endif
 
 # we want to recompile everything if COPTS changes,

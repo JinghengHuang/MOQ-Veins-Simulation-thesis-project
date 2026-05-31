@@ -1,0 +1,4 @@
+<!> Error: Could not load NED sources from '.': Redeclaration: compound-module TestMoqAnnounce clashes with compound-module TestMoqAnnounce defined at /mnt/d/Work/Thesis/MoQVeinsSim/tests/moq/work/moq_announce/TestMoqAnnounce.ned:6, at /mnt/d/Work/Thesis/MoQVeinsSim/tests/moq/work/moq_announce/test.ned:6
+malloc(): mismatching next->prev_size (unsorted)
+malloc(): mismatching next->prev_size (unsorted)
+Aborted

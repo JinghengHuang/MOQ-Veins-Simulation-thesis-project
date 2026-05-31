@@ -1,4 +1,4 @@
-
+package moq_full_flow;
 import inet.node.inet.StandardHost;
 import inet.node.ethernet.Eth100M;
 import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;

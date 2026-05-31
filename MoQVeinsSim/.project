@@ -4,6 +4,7 @@
 	<comment></comment>
 	<projects>
 		<project>inet-4.6.0</project>
+		<project>veins-git</project>
 		<project>simu5g-git</project>
 		<project>veins_inet</project>
 	</projects>
