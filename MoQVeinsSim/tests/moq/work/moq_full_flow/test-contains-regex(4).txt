@@ -1,1 +1,0 @@
-.*Subscriber subscriber subscribed to publisher/PCloud.*

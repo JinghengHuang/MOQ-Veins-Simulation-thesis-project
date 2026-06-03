@@ -10,6 +10,7 @@ date: 5/15/2026
 #include <regex.h>
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
+#include "inet/common/packet/chunk/BytesChunk.h"
 #include "models/MoqSubscriber_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
 
@@ -115,12 +116,13 @@ namespace moqveinssim
             publisherSocketsByTrackKey[tKey] = peerSocket;
 
             EV_INFO << "Registered track " << tm.trackAlias << " from publisher " << pid << std::endl;
+            EV_INFO << "Track counts: " << publishedTracks.size() << std::endl;
 
             auto streamTag = packet->findTag<inet::QuicStreamReq>();
             long streamId = streamTag ? streamTag->getStreamID() : 0;
 
             auto response = new inet::Packet("ANNOUNCE_OK");
-            response->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+            response->insertAtBack(inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>{0x01}));
             response->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
             peerSocket->send(response);
         }
@@ -229,7 +231,7 @@ namespace moqveinssim
                     subscriberByTrack[tKey].push_back(sid);
 
                     auto responseSubscriber = new inet::Packet("SUBSCRIBE_OK");
-                    responseSubscriber->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+                    responseSubscriber->insertAtBack(inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>{0x01}));
                     responseSubscriber->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
                     subscriberSocket->send(responseSubscriber);
 
@@ -248,7 +250,7 @@ namespace moqveinssim
                 else
                 {
                     auto response = new inet::Packet("SUBSCRIBE_ERROR");
-                    response->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+                    response->insertAtBack(inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>{0x01}));
                     response->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
                     subscriberSocket->send(response);
                 }
@@ -256,7 +258,7 @@ namespace moqveinssim
             catch (const std::string msg)
             {
                 auto response = new inet::Packet("SUBSCRIBE_ERROR");
-                response->insertAtBack(inet::makeShared<inet::ByteCountChunk>(inet::B(1)));
+                response->insertAtBack(inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>{0x01}));
                 response->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
                 subscriberSocket->send(response);
             }

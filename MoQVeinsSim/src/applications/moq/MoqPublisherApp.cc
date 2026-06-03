@@ -2,12 +2,15 @@
 
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
+#include "inet/common/packet/chunk/BytesChunk.h"
 #include "veins/modules/mobility/traci/TraCIMobility.h"
 #include "models/MoqObjectChunk_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
+#include "models/MoqSubscriber_m.h"
 #include <algorithm>
 
 #include <omnetpp.h>
+#include <csignal>
 
 namespace moqveinssim {
 Define_Module(MoqPublisherApp);
@@ -52,6 +55,8 @@ void MoqPublisherApp::handleTimeout(omnetpp::cMessage *msg)
 void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
 {
     EV_DEBUG << "handle message of kind " << msg->getKind() << std::endl;
+    EV_DEBUG << "NAME: " << msg->getName() << std::endl;
+    EV_DEBUG << "SELF_MESSAGE: " << msg->isSelfMessage() << std::endl;
     if (msg->isSelfMessage()) {
         int id = msg->getKind();
         if (id == TIMER_CONNECT || id == TIMER_LIMIT_RUNTIME){
@@ -59,10 +64,13 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
         }
         if (sendingAllowed == true){
             std::string name = msg->getName();
+            EV_DEBUG << "NAME: " << name << std::endl;
             long tid = std::stoi(name);
             auto it = tracks.find(tid);
             inet::Packet *packet = nullptr;
             TrackMeta* track = nullptr;
+            
+            EV_DEBUG << "ID: " << id << std::endl;
             switch (id)
             {
             case PUB_ANNOUNCE:
@@ -78,7 +86,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     header->setPriority(track->priority);
                     header->setSendInterval(track->sendInterval);
                     header->setPayloadSize(track->packetSize);
-                    header->setChunkLength(inet::B(100));
+                    header->setChunkLength(inet::B(64));
                     packet->insertAtBack(header);
 
                 }
@@ -94,17 +102,23 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     header->setTrackAlias(track->trackAlias.c_str());
                     header->setPriority(track->priority);
                     header->setObjectId(track->nextObjectId);
+                    header->setPayloadLength(track->packetSize);
+                    header->setCreationTime(omnetpp::simTime());
                     header->setGroupId(0); // for now all group is 0, will see if its necessary to implement group or only track/object is enough
+                    
                     track->nextObjectId++;
+                    header->setChunkLength(inet::B(64));
                     packet->insertAtBack(header);
-                    auto payload = inet::makeShared<inet::ByteCountChunk>(inet::B(track->packetSize));
+                    auto payload = inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>(track->packetSize, 0));
                     packet->insertAtBack(payload);
+                    EV_INFO << "Send track object data: " << track->trackAlias.c_str() << std::endl;
                     // Arrange sending another packet of the same event
                     sendTrackData(tid);
                 }
                 break;
             case SUB_ERROR:
                 // Do nothing on error packet
+                EV_DEBUG << "Getting sub error: " << msg->getKind() << std::endl;
                 break;
             }
             
@@ -126,7 +140,6 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 socket.send(packet);
                 EV_INFO << "sendData - track " << track->trackId << " - name " << track->trackName << " - size " << track->packetSize << " B" << " - streamId  " << streamId << std::endl;
             }
-            EV_DEBUG << "handle message of kind " << msg->getKind() << std::endl;
         }
     } else if (msg->arrivedOn("socketIn")) { // from QUIC
         // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
@@ -196,6 +209,10 @@ void MoqPublisherApp::handleCrashOperation(inet::LifecycleOperation *operation)
     cancelEvent(timerLimitRuntime);
 }
 
+void MoqPublisherApp::socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) {
+    socket->recv(static_cast<int64_t>(dataInfo->getAvaliableDataSize()), dataInfo->getStreamID());
+}
+
 void MoqPublisherApp::socketEstablished(inet::QuicSocket *socket) {
     EV_INFO << "socketEstablished" << std::endl;
     sendingAllowed = true;
@@ -203,7 +220,22 @@ void MoqPublisherApp::socketEstablished(inet::QuicSocket *socket) {
 }
 
 void MoqPublisherApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) {
-    EV_DEBUG << "Data arrived" << std::endl;
+    EV_INFO << "Data arrived: " << packet->getName() << std::endl;
+    auto frontChunk = packet->peekAtFront<inet::Chunk>();
+    const auto *subscribeOkHeader = dynamic_cast<const MoqSubscriber *>(frontChunk.get());
+    if (subscribeOkHeader != nullptr) {
+        std::string trackAlias = std::string(subscribeOkHeader->getTrackNamespace()) + "/" + subscribeOkHeader->getTrackName();
+        for (auto& entry : tracks) {
+            TrackMeta& track = entry.second;
+            if (track.trackAlias == trackAlias) {
+                cancelEvent(track.timer);
+                track.timer->setKind(SUB_SUCCESS);
+                scheduleAt(omnetpp::simTime(), track.timer);
+                EV_INFO << "SUBSCRIBE_OK for track: " << trackAlias << " - starting data transmission" << std::endl;
+                break;
+            }
+        }
+    }
 }
 
 void MoqPublisherApp::socketClosed(inet::QuicSocket *socket) {
@@ -230,6 +262,7 @@ void MoqPublisherApp::sendTrackAnnouncementData(){
 // Send track announcement data
 void MoqPublisherApp::sendTrackData(long tid){
     
+    EV_INFO << "Sending track data of " << tid << std::endl;
     const auto track = tracks.find(tid);
     if(track != tracks.end()){
         scheduleAt(inet::simTime() + track->second.sendInterval, track->second.timer);

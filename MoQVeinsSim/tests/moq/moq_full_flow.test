@@ -6,12 +6,14 @@ to both.  Verifies the complete relay handshake sequence in order:
   3. Subscriber connects and subscribes to both tracks
   4. Relay finds each track, replies SUBSCRIBE_OK to subscriber,
      and forwards SUBSCRIBE_OK with track details to publisher
+  5. Publisher sends track object data to relay, relay sends them to the respective subscribers 
 
 Two-track scenario exercises that the relay's unordered_maps handle
 multiple entries independently.
 
 %file: test.ned
 
+package moq_full_flow;
 import inet.node.inet.StandardHost;
 import inet.node.ethernet.Eth100M;
 import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
@@ -53,29 +55,51 @@ cmdenv-log-prefix = "%N: "
 *.relay.app[0].localAddress = ""
 *.relay.app[0].localPort = 9001
 
-# --- Publisher: two tracks ---
-*.publisher.hasQuic = true
-*.publisher.quic.typename = "Quic"
-*.publisher.numApps = 1
-*.publisher.app[0].typename = "moqveinssim.applications.moq.MoqPublisherApp"
-*.publisher.app[0].localAddress = ""
-*.publisher.app[0].localPort = 9000
-*.publisher.app[0].connectAddress = "relay"
-*.publisher.app[0].connectPort = 9001
-*.publisher.app[0].connectTime = 0.2s
-*.publisher.app[0].tracks = [{trackName: "BBox", packetSize: 50B, sendInterval: 1s, priority: 0}, {trackName: "PCloud", packetSize: 300000B, sendInterval: 2s, priority: 1}]
+# --- Publisher: two tracks respectively ---
+*.publisher1.hasQuic = true
+*.publisher1.quic.typename = "Quic"
+*.publisher1.numApps = 1
+*.publisher1.app[0].typename = "moqveinssim.applications.moq.MoqPublisherApp"
+*.publisher1.app[0].localAddress = ""
+*.publisher1.app[0].localPort = 9000
+*.publisher1.app[0].connectAddress = "relay"
+*.publisher1.app[0].connectPort = 9001
+*.publisher1.app[0].connectTime = 0.2s
+*.publisher1.app[0].tracks = [{trackName: "BBox", packetSize: 50B, sendInterval: 1s, priority: 0}]
+*.publisher2.hasQuic = true
+*.publisher2.quic.typename = "Quic"
+*.publisher2.numApps = 1
+*.publisher2.app[0].typename = "moqveinssim.applications.moq.MoqPublisherApp"
+*.publisher2.app[0].localAddress = ""
+*.publisher2.app[0].localPort = 9000
+*.publisher2.app[0].connectAddress = "relay"
+*.publisher2.app[0].connectPort = 9001
+*.publisher2.app[0].connectTime = 0.2s
+*.publisher2.app[0].tracks = [{trackName: "PCloud", packetSize: 300000B, sendInterval: 2s, priority: 1}]
 
 # --- Subscriber: subscribe to both tracks ---
-*.subscriber.hasQuic = true
-*.subscriber.quic.typename = "Quic"
-*.subscriber.numApps = 1
-*.subscriber.app[0].typename = "moqveinssim.applications.moq.MoqSubscriberApp"
-*.subscriber.app[0].localAddress = ""
-*.subscriber.app[0].localPort = 9002
-*.subscriber.app[0].connectAddress = "relay"
-*.subscriber.app[0].connectPort = 9001
-*.subscriber.app[0].connectTime = 0.8s
-*.subscriber.app[0].tracks = [{trackNamespace: "publisher", trackName: "BBox", startObjectId: 0, subscriberPriority: 0}, {trackNamespace: "publisher", trackName: "PCloud", startObjectId: 0, subscriberPriority: 1}]
+*.subscriber1.hasQuic = true
+*.subscriber1.quic.typename = "Quic"
+*.subscriber1.numApps = 1
+*.subscriber1.app[0].typename = "moqveinssim.applications.moq.MoqSubscriberApp"
+*.subscriber1.app[0].localAddress = ""
+*.subscriber1.app[0].localPort = 9002
+*.subscriber1.app[0].connectAddress = "relay"
+*.subscriber1.app[0].connectPort = 9001
+*.subscriber1.app[0].connectTime = 0.8s
+*.subscriber1.app[0].tracks = [{trackNamespace: "publisher1", trackName: "BBox", startObjectId: 0, subscriberPriority: 0}]
+
+*.subscriber2.hasQuic = true
+*.subscriber2.quic.typename = "Quic"
+*.subscriber2.numApps = 1
+*.subscriber2.app[0].typename = "moqveinssim.applications.moq.MoqSubscriberApp"
+*.subscriber2.app[0].localAddress = ""
+*.subscriber2.app[0].localPort = 9002
+*.subscriber2.app[0].connectAddress = "relay"
+*.subscriber2.app[0].connectPort = 9001
+*.subscriber2.app[0].connectTime = 0.8s
+*.subscriber2.app[0].tracks = [{trackNamespace: "publisher2", trackName: "PCloud", startObjectId: 0, subscriberPriority: 0}]
+
 
 %subst: /\x1B\[[0-9;]*m//
 

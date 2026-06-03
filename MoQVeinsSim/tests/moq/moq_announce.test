@@ -4,7 +4,7 @@ Relay must register the track (logged as "Registered track ...") and
 reply with ANNOUNCE_OK on the same QUIC stream.
 
 %file: test.ned
-
+package moq_announce;
 import inet.node.inet.StandardHost;
 import inet.node.ethernet.Eth100M;
 import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;

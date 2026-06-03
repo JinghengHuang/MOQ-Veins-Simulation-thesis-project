@@ -9,7 +9,7 @@ Publisher connectTime = 0.2s, subscriber connectTime = 0.8s so the
 ANNOUNCE is guaranteed to be processed before the SUBSCRIBE arrives.
 
 %file: test.ned
-
+package moq_subscribe;
 import inet.node.inet.StandardHost;
 import inet.node.ethernet.Eth100M;
 import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;

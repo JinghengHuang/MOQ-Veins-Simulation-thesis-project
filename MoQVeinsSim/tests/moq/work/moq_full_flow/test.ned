@@ -8,10 +8,14 @@ network TestMoqFullFlow
     submodules:
         configurator: Ipv4NetworkConfigurator;
         relay: StandardHost;
-        publisher: StandardHost;
-        subscriber: StandardHost;
+        publisher1: StandardHost;
+        publisher2: StandardHost;
+        subscriber1: StandardHost;
+        subscriber2: StandardHost;
     connections:
-        publisher.ethg++  <--> Eth100M <--> relay.ethg++;
-        subscriber.ethg++ <--> Eth100M <--> relay.ethg++;
+        publisher1.ethg++  <--> Eth100M <--> relay.ethg++;
+        subscriber1.ethg++ <--> Eth100M <--> relay.ethg++;
+        publisher2.ethg++  <--> Eth100M <--> relay.ethg++;
+        subscriber2.ethg++ <--> Eth100M <--> relay.ethg++;
 }
 

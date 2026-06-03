@@ -50,7 +50,8 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
         virtual void handleCrashOperation(inet::LifecycleOperation *operation) override;
         virtual void socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) override;
         virtual void socketConnectionAvailable(inet::QuicSocket *socket) override { };
-        virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override { };
+        virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override;
+
         virtual void socketEstablished(inet::QuicSocket *socket) override;
         virtual void socketClosed(inet::QuicSocket *socket) override;
         virtual void socketDestroyed(inet::QuicSocket *socket) override { };
