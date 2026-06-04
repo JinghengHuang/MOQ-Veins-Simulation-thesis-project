@@ -161,6 +161,7 @@ void MoqSubscriberApp::socketEstablished(inet::QuicSocket *socket) {
 
 void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) {
     EV_DEBUG << "Data arrived" << std::endl;
+    delete packet;
 }
 
 void MoqSubscriberApp::socketClosed(inet::QuicSocket *socket) {

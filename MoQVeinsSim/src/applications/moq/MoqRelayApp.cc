@@ -146,6 +146,7 @@ namespace moqveinssim
         {
             EV_DEBUG << "Unknown packet type in socketDataArrived" << std::endl;
         }
+        delete packet;
     }
 
     void MoqRelayApp::socketClosed(inet::QuicSocket *closedSocket)

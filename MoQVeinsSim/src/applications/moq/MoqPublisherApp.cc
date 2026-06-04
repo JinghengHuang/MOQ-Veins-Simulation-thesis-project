@@ -2,7 +2,6 @@
 
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
-#include "inet/common/packet/chunk/BytesChunk.h"
 #include "veins/modules/mobility/traci/TraCIMobility.h"
 #include "models/MoqObjectChunk_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
@@ -107,10 +106,13 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     header->setGroupId(0); // for now all group is 0, will see if its necessary to implement group or only track/object is enough
                     
                     track->nextObjectId++;
-                    header->setChunkLength(inet::B(64));
+                    // Inflate chunkLength to cover both the header fields and the payload.
+                    // This keeps the packet as a single chunk so QUIC fragments it as
+                    // SliceChunks rather than a SequenceChunk — SequenceChunk insertion
+                    // flattens sub-chunks individually, which confuses the receiver's QUIC
+                    // frame parser into treating leftover payload bytes as a FrameHeader.
+                    header->setChunkLength(inet::B(64 + track->packetSize));
                     packet->insertAtBack(header);
-                    auto payload = inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>(track->packetSize, 0));
-                    packet->insertAtBack(payload);
                     EV_INFO << "Send track object data: " << track->trackAlias.c_str() << std::endl;
                     // Arrange sending another packet of the same event
                     sendTrackData(tid);
@@ -236,6 +238,7 @@ void MoqPublisherApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *
             }
         }
     }
+    delete packet;
 }
 
 void MoqPublisherApp::socketClosed(inet::QuicSocket *socket) {
