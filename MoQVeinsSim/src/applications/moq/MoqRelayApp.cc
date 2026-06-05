@@ -13,6 +13,7 @@ date: 5/15/2026
 #include "inet/common/packet/chunk/BytesChunk.h"
 #include "models/MoqSubscriber_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
+#include "models/MoqObjectChunk_m.h"
 
 namespace moqveinssim
 {
@@ -91,6 +92,7 @@ namespace moqveinssim
         // QUIC recv() delivers data in a "data" wrapper regardless of the original name.
         // Identify message type by dynamic-casting the leading chunk.
         auto frontChunk = packet->peekAtFront<inet::Chunk>();
+        EV_DEBUG << "Received packet: " << packet->getFullName() << " With header: " << frontChunk.get()->getClassName() << std::endl;
         const auto *announceHeader = dynamic_cast<const MoqPublisherAnnounce *>(frontChunk.get());
         const auto *subHeader = dynamic_cast<const MoqSubscriber *>(frontChunk.get());
 
@@ -121,6 +123,13 @@ namespace moqveinssim
             auto streamTag = packet->findTag<inet::QuicStreamReq>();
             long streamId = streamTag ? streamTag->getStreamID() : 0;
 
+            // Record which (socket, stream) carries data objects for this track.
+            // The publisher reuses the same stream for TRACK_OBJ after ANNOUNCE.
+            publisherStreamToTrack[{peerSocket->getSocketId(), streamId}] = {tm.trackNamespace, tm.trackName};
+            EV_DEBUG << "Mapped socketId=" << peerSocket->getSocketId()
+                     << " streamId=" << streamId
+                     << " -> track " << tm.trackAlias << std::endl;
+
             auto response = new inet::Packet("ANNOUNCE_OK");
             response->insertAtBack(inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>{0x01}));
             response->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
@@ -137,14 +146,69 @@ namespace moqveinssim
             long streamId = streamTag ? streamTag->getStreamID() : 0;
 
             subscriberSockets[sid] = peerSocket;
+            subscriberStreamIds[sid] = streamId;
 
-            EV_INFO << "Subscriber " << sid << " subscribed to " << trackAlias << std::endl;
+            EV_INFO << "Subscriber " << sid << " subscribed to " << trackAlias
+                    << " on streamId=" << streamId << std::endl;
 
             onSubscribe(sid, trackAlias, streamId);
         }
         else
         {
-            EV_DEBUG << "Unknown packet type in socketDataArrived" << std::endl;
+            // Not a control message — treat as TRACK_OBJ data (SliceChunk fragments
+            // from a publisher's object stream). Look up the track by (socketId, streamId)
+            // and forward the raw packet to every subscriber of that track.
+            auto streamTag = packet->findTag<inet::QuicStreamReq>();
+            long streamId = streamTag ? streamTag->getStreamID() : 0;
+            int socketId = peerSocket->getSocketId();
+
+            EV_DEBUG << "Non-control packet on socketId=" << socketId
+                     << " streamId=" << streamId
+                     << " chunk=" << frontChunk.get()->getClassName() << std::endl;
+
+            auto trackIt = publisherStreamToTrack.find({socketId, streamId});
+            if (trackIt != publisherStreamToTrack.end())
+            {
+                TrackKey tKey{trackIt->second.first, trackIt->second.second};
+                auto subsIt = subscriberByTrack.find(tKey);
+                if (subsIt != subscriberByTrack.end() && !subsIt->second.empty())
+                {
+                    EV_DEBUG << "Forwarding object data for track "
+                             << tKey.trackNamespace << "/" << tKey.trackName
+                             << " to " << subsIt->second.size() << " subscriber(s)" << std::endl;
+
+                    for (const auto &subscriberId : subsIt->second)
+                    {
+                        auto subSocketIt = subscriberSockets.find(subscriberId);
+                        auto subStreamIt = subscriberStreamIds.find(subscriberId);
+                        if (subSocketIt == subscriberSockets.end() || subStreamIt == subscriberStreamIds.end())
+                        {
+                            EV_WARN << "Subscriber " << subscriberId << " has no registered socket or stream, skipping" << std::endl;
+                            continue;
+                        }
+
+                        auto fwdPacket = packet->dup();
+                        fwdPacket->setName("TRACK_OBJ_FWD");
+                        fwdPacket->removeTagIfPresent<inet::QuicStreamReq>();
+                        fwdPacket->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(subStreamIt->second);
+                        subSocketIt->second->send(fwdPacket);
+
+                        EV_INFO << "Forwarded object chunk to subscriber " << subscriberId
+                                << " on streamId=" << subStreamIt->second << std::endl;
+                    }
+                }
+                else
+                {
+                    EV_DEBUG << "No subscribers for track "
+                             << tKey.trackNamespace << "/" << tKey.trackName
+                             << ", dropping object data" << std::endl;
+                }
+            }
+            else
+            {
+                EV_WARN << "Received data on unknown stream (socketId=" << socketId
+                        << " streamId=" << streamId << "), discarding" << std::endl;
+            }
         }
         delete packet;
     }

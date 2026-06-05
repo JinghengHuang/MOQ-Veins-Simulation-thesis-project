@@ -8,6 +8,8 @@ Date: 5/15/2026
 #ifndef MOQRELAYAPP_H
 #define MOQRELAYAPP_H
 
+#include <map>
+#include <utility>
 #include <vector>
 #include <omnetpp.h>
 #include <unordered_map>
@@ -46,6 +48,10 @@ private:
     std::unordered_map<std::string, inet::QuicSocket *> publisherSockets;
     std::unordered_map<TrackKey, inet::QuicSocket *, TrackKeyHash> publisherSocketsByTrackKey;
     std::unordered_map<std::string, inet::QuicSocket *> subscriberSockets;
+    // Maps (socketId, streamId) -> (trackNamespace, trackName) for incoming publisher data streams
+    std::map<std::pair<int, long>, std::pair<std::string, std::string>> publisherStreamToTrack;
+    // Maps subscriberId -> streamId for outgoing data forwarding
+    std::map<std::string, long> subscriberStreamIds;
     inet::L3Address connectAddress;
     unsigned int connectPort;
     bool sendingAllowed = false;
