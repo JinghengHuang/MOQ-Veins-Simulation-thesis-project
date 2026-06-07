@@ -187,11 +187,9 @@ namespace moqveinssim
                             continue;
                         }
 
-                        auto fwdPacket = packet->dup();
-                        fwdPacket->setName("TRACK_OBJ_FWD");
-                        fwdPacket->removeTagIfPresent<inet::QuicStreamReq>();
-                        fwdPacket->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(subStreamIt->second);
-                        subSocketIt->second->send(fwdPacket);
+                        auto fwdPacket = new inet::Packet("TRACK_OBJ_FWD");
+                        fwdPacket->insertAtBack(packet->peekData());
+                        subSocketIt->second->send(fwdPacket, subStreamIt->second);
 
                         EV_INFO << "Forwarded object chunk to subscriber " << subscriberId
                                 << " on streamId=" << subStreamIt->second << std::endl;
