@@ -95,7 +95,6 @@ namespace moqveinssim
         EV_DEBUG << "Received packet: " << packet->getFullName() << " With header: " << frontChunk.get()->getClassName() << std::endl;
         const auto *announceHeader = dynamic_cast<const MoqPublisherAnnounce *>(frontChunk.get());
         const auto *subHeader = dynamic_cast<const MoqSubscriber *>(frontChunk.get());
-        const auto *objChunkHeader = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
 
         if (announceHeader != nullptr)
         {
@@ -154,11 +153,11 @@ namespace moqveinssim
 
             onSubscribe(sid, trackAlias, streamId);
         }
-        else if (objChunkHeader != nullptr)
+        else
         {
-            // Not a control message — treat as TRACK_OBJ data (SliceChunk fragments
-            // from a publisher's object stream). Look up the track by (socketId, streamId)
-            // and forward the raw packet to every subscriber of that track.
+            // Not a control message — treat as TRACK_OBJ data. Handles both a complete
+            // MoqObjectChunk and SliceChunk fragments that QUIC produces for large packets.
+            // Look up the track by (socketId, streamId) and forward to every subscriber.
             auto streamTag = packet->findTag<inet::QuicStreamReq>();
             long streamId = streamTag ? streamTag->getStreamID() : 0;
             int socketId = peerSocket->getSocketId();

@@ -2,6 +2,7 @@
 
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
+#include "inet/common/packet/chunk/SliceChunk.h"
 #include "veins/modules/mobility/traci/TraCIMobility.h"
 #include "models/MoqObjectChunk_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
@@ -165,21 +166,32 @@ void MoqSubscriberApp::socketDataAvailable(inet::QuicSocket* socket, inet::QuicD
 void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) {
     auto frontChunk = packet->peekAtFront<inet::Chunk>();
     EV_DEBUG << "Received packet: " << packet->getFullName() << " With header: " << frontChunk.get()->getClassName() << std::endl;
-    const auto *chunk = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
+
+    // Large objects arrive as SliceChunk fragments; unwrap to access the original MoqObjectChunk.
+    const MoqObjectChunk *chunk = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
+    bool isFirstSlice = true;
     if (chunk == nullptr) {
-        // EV_WARN << "Received packet with unexpected format (no MoqObjectChunk header), dropping" << std::endl;
+        const auto *sliceChunk = dynamic_cast<const inet::SliceChunk *>(frontChunk.get());
+        if (sliceChunk != nullptr) {
+            chunk = dynamic_cast<const MoqObjectChunk *>(sliceChunk->getChunk().get());
+            isFirstSlice = (sliceChunk->getOffset() == inet::b(0));
+        }
+    }
+    if (chunk == nullptr) {
         delete packet;
         return;
     }
-    receive_count += 1;
-    EV_INFO << "Track object received"
-            << " | trackId=" << chunk->getTrackId()
-            << " | trackAlias=" << chunk->getTrackAlias()
-            << " | groupId=" << chunk->getGroupId()
-            << " | objectId=" << chunk->getObjectId()
-            << " | payloadLength=" << chunk->getPayloadLength()
-            << " | creationTime=" << chunk->getCreationTime()
-            << std::endl;
+    if (isFirstSlice) {
+        receive_count += 1;
+        EV_INFO << "Track object received"
+                << " | trackId=" << chunk->getTrackId()
+                << " | trackAlias=" << chunk->getTrackAlias()
+                << " | groupId=" << chunk->getGroupId()
+                << " | objectId=" << chunk->getObjectId()
+                << " | payloadLength=" << chunk->getPayloadLength()
+                << " | creationTime=" << chunk->getCreationTime()
+                << std::endl;
+    }
     delete packet;
 }
 
