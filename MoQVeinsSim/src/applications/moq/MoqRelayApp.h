@@ -44,7 +44,7 @@ private:
 
     std::unordered_map<TrackKey, TrackMeta, TrackKeyHash> publishedTracks;
     std::unordered_map<TrackKey, std::vector<std::string>, TrackKeyHash> subscriberByTrack;
-
+    std::unordered_map<std::string, int> forward_count;
     std::unordered_map<std::string, inet::QuicSocket *> publisherSockets;
     std::unordered_map<TrackKey, inet::QuicSocket *, TrackKeyHash> publisherSocketsByTrackKey;
     std::unordered_map<std::string, inet::QuicSocket *> subscriberSockets;

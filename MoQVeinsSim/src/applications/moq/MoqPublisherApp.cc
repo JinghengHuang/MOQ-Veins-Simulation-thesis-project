@@ -91,7 +91,6 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 }
                 break;
             case SUB_SUCCESS:
-                DEBUG_TRAP;
                 if (it != tracks.end()) {
                     track = &it->second;
                     // Send track packet with data stream
@@ -269,7 +268,6 @@ void MoqPublisherApp::sendTrackData(long tid){
     const auto track = tracks.find(tid);
     if(track != tracks.end()){
         TrackMeta tm = track->second;
-        DEBUG_TRAP;
         scheduleAt(inet::simTime() + tm.sendInterval, tm.timer);
     }else{
         errorEvent = new omnetpp::cMessage("SUB_ERROR");

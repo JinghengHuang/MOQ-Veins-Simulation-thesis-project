@@ -39,6 +39,7 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         std::unordered_map<int, TrackMeta> tracks;
         std::unordered_map<int, int> trackToStreamMap;
         inet::L3Address connectAddress;
+        int receive_count = 0;
         unsigned int connectPort;
         bool sendingAllowed = false;
     protected:
@@ -50,7 +51,8 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         virtual void handleCrashOperation(inet::LifecycleOperation *operation) override;
         virtual void socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) override;
         virtual void socketConnectionAvailable(inet::QuicSocket *socket) override { };
-        virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override { };
+        virtual void socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) override;
+
         virtual void socketEstablished(inet::QuicSocket *socket) override;
         virtual void socketClosed(inet::QuicSocket *socket) override;
         virtual void socketDestroyed(inet::QuicSocket *socket) override { };
@@ -58,8 +60,7 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
         virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
         virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
-        virtual void sendTrackAnnouncementData();
-        virtual void sendTrackData(long tid);
+        virtual void sendTrackSubscribeData();
         void handleTimeout(omnetpp::cMessage *msg);
 };
 }

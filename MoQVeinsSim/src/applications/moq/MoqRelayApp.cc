@@ -95,6 +95,7 @@ namespace moqveinssim
         EV_DEBUG << "Received packet: " << packet->getFullName() << " With header: " << frontChunk.get()->getClassName() << std::endl;
         const auto *announceHeader = dynamic_cast<const MoqPublisherAnnounce *>(frontChunk.get());
         const auto *subHeader = dynamic_cast<const MoqSubscriber *>(frontChunk.get());
+        const auto *objChunkHeader = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
 
         if (announceHeader != nullptr)
         {
@@ -153,7 +154,7 @@ namespace moqveinssim
 
             onSubscribe(sid, trackAlias, streamId);
         }
-        else
+        else if (objChunkHeader != nullptr)
         {
             // Not a control message — treat as TRACK_OBJ data (SliceChunk fragments
             // from a publisher's object stream). Look up the track by (socketId, streamId)
@@ -186,13 +187,15 @@ namespace moqveinssim
                             EV_WARN << "Subscriber " << subscriberId << " has no registered socket or stream, skipping" << std::endl;
                             continue;
                         }
+                        // TODO: Only publisher1 send is successful, subscriber2 received nothing from publisher2, but the subscription is successful.
 
                         auto fwdPacket = new inet::Packet("TRACK_OBJ_FWD");
-                        fwdPacket->insertAtBack(packet->peekData());
+                        fwdPacket->insertAtBack(frontChunk);
                         subSocketIt->second->send(fwdPacket, subStreamIt->second);
-
+                        forward_count[subscriberId] += 1;
                         EV_INFO << "Forwarded object chunk to subscriber " << subscriberId
-                                << " on streamId=" << subStreamIt->second << std::endl;
+                                << " on streamId=" << subStreamIt->second << " For subsciber " << subscriberId << ": " <<
+                                 forward_count[subscriberId] << "packets were send." << std::endl;
                     }
                 }
                 else

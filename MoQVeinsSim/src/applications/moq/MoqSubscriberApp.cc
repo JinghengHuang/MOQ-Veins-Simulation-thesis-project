@@ -97,7 +97,6 @@ void MoqSubscriberApp::handleMessageWhenUp(omnetpp::cMessage *msg)
     } else if (msg->arrivedOn("socketIn")) { // from QUIC
         // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
         socket.processMessage(msg);
-        //delete msg;
     } else { // something really strange...
         throw omnetpp::cRuntimeError("Invalid message: %d", (int) msg->getKind());
     }
@@ -156,11 +155,31 @@ void MoqSubscriberApp::handleCrashOperation(inet::LifecycleOperation *operation)
 void MoqSubscriberApp::socketEstablished(inet::QuicSocket *socket) {
     EV_INFO << "socketEstablished" << std::endl;
     sendingAllowed = true;
-    sendTrackAnnouncementData();
+    sendTrackSubscribeData();
+}
+
+void MoqSubscriberApp::socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) {
+    socket->recv(static_cast<int64_t>(dataInfo->getAvaliableDataSize()), dataInfo->getStreamID());
 }
 
 void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) {
-    EV_DEBUG << "Data arrived" << std::endl;
+    auto frontChunk = packet->peekAtFront<inet::Chunk>();
+    EV_DEBUG << "Received packet: " << packet->getFullName() << " With header: " << frontChunk.get()->getClassName() << std::endl;
+    const auto *chunk = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
+    if (chunk == nullptr) {
+        // EV_WARN << "Received packet with unexpected format (no MoqObjectChunk header), dropping" << std::endl;
+        delete packet;
+        return;
+    }
+    receive_count += 1;
+    EV_INFO << "Track object received"
+            << " | trackId=" << chunk->getTrackId()
+            << " | trackAlias=" << chunk->getTrackAlias()
+            << " | groupId=" << chunk->getGroupId()
+            << " | objectId=" << chunk->getObjectId()
+            << " | payloadLength=" << chunk->getPayloadLength()
+            << " | creationTime=" << chunk->getCreationTime()
+            << std::endl;
     delete packet;
 }
 
@@ -178,23 +197,11 @@ void MoqSubscriberApp::socketSendQueueDrain(inet::QuicSocket *socket)
 }
 
 // Based on track configurations, send track announcement data
-void MoqSubscriberApp::sendTrackAnnouncementData(){
+void MoqSubscriberApp::sendTrackSubscribeData(){
     
     for (auto & track : tracks){
 
         scheduleAt(inet::simTime(), track.second.timer);
-    }
-}
-// Send track announcement data
-void MoqSubscriberApp::sendTrackData(long tid){
-    
-    const auto track = tracks.find(tid);
-    if(track != tracks.end()){
-        scheduleAt(inet::simTime() + track->second.sendInterval, track->second.timer);
-    }else{
-        errorEvent = new omnetpp::cMessage("SUB_ERROR");
-        errorEvent->setKind(SUB_ERROR);
-        scheduleAt(inet::simTime(), errorEvent);
     }
 }
 
