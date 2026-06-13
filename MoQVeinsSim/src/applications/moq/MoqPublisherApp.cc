@@ -193,7 +193,7 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
         }
     }
 
-    scheduleAt(par("connectTime"), timerConnect);
+    scheduleAt(inet::simTime() + par("connectTime"), timerConnect);
 }
 
 void MoqPublisherApp::handleStopOperation(inet::LifecycleOperation *operation)
@@ -245,12 +245,12 @@ void MoqPublisherApp::socketClosed(inet::QuicSocket *socket) {
 }
 void MoqPublisherApp::socketSendQueueFull(inet::QuicSocket *socket)
 {
-    sendingAllowed = false;
+    EV_WARN << "Send queue full, QUIC will handle backpressure" << std::endl;
 }
 
 void MoqPublisherApp::socketSendQueueDrain(inet::QuicSocket *socket)
 {
-    sendingAllowed = true;
+    EV_DEBUG << "Send queue drained" << std::endl;
 }
 
 // Based on track configurations, send track announcement data

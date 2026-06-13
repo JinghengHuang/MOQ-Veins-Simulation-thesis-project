@@ -11,6 +11,7 @@ date: 5/15/2026
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/common/packet/chunk/BytesChunk.h"
+#include "inet/common/packet/chunk/SliceChunk.h"
 #include "models/MoqSubscriber_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
 #include "models/MoqObjectChunk_m.h"
@@ -155,9 +156,12 @@ namespace moqveinssim
         }
         else
         {
-            // Not a control message — treat as TRACK_OBJ data. Handles both a complete
-            // MoqObjectChunk and SliceChunk fragments that QUIC produces for large packets.
-            // Look up the track by (socketId, streamId) and forward to every subscriber.
+            // Not a control message — treat as TRACK_OBJ data.
+            // Large objects (e.g. PCloud) arrive as SliceChunk fragments from QUIC.
+            // Unwrap to get the underlying MoqObjectChunk; only forward on the first
+            // slice (offset==0) to avoid re-fragmentation on the relay→subscriber link,
+            // which would cause QUIC at the subscriber to misinterpret SliceChunks as
+            // FrameHeaders and crash.
             auto streamTag = packet->findTag<inet::QuicStreamReq>();
             long streamId = streamTag ? streamTag->getStreamID() : 0;
             int socketId = peerSocket->getSocketId();
@@ -165,6 +169,31 @@ namespace moqveinssim
             EV_DEBUG << "Non-control packet on socketId=" << socketId
                      << " streamId=" << streamId
                      << " chunk=" << frontChunk.get()->getClassName() << std::endl;
+
+            // Resolve the actual MoqObjectChunk regardless of whether the front chunk
+            // is a complete MoqObjectChunk or a SliceChunk wrapping one.
+            const MoqObjectChunk *srcObj = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
+            bool isFirstChunk = (srcObj != nullptr);
+            if (srcObj == nullptr) {
+                const auto *sc = dynamic_cast<const inet::SliceChunk *>(frontChunk.get());
+                if (sc != nullptr) {
+                    srcObj = dynamic_cast<const MoqObjectChunk *>(sc->getChunk().get());
+                    isFirstChunk = (sc->getOffset() == inet::b(0));
+                }
+            }
+
+            if (!isFirstChunk) {
+                // Non-first slice of a large object — skip; the first slice already
+                // triggered the forwarding for this object.
+                delete packet;
+                return;
+            }
+            if (srcObj == nullptr) {
+                EV_WARN << "Received non-MoqObjectChunk data on socketId=" << socketId
+                        << " streamId=" << streamId << ", discarding" << std::endl;
+                delete packet;
+                return;
+            }
 
             auto trackIt = publisherStreamToTrack.find({socketId, streamId});
             if (trackIt != publisherStreamToTrack.end())
@@ -186,15 +215,29 @@ namespace moqveinssim
                             EV_WARN << "Subscriber " << subscriberId << " has no registered socket or stream, skipping" << std::endl;
                             continue;
                         }
-                        // TODO: Only publisher1 send is successful, subscriber2 received nothing from publisher2, but the subscription is successful.
+
+                        // Reconstruct a header-only MoqObjectChunk (64 B) for forwarding.
+                        // This keeps the forwarded packet small (no re-fragmentation) and
+                        // preserves all metadata the subscriber needs to log.
+                        auto fwdHeader = inet::makeShared<MoqObjectChunk>();
+                        fwdHeader->setTrackId(srcObj->getTrackId());
+                        fwdHeader->setTrackAlias(srcObj->getTrackAlias());
+                        fwdHeader->setGroupId(srcObj->getGroupId());
+                        fwdHeader->setObjectId(srcObj->getObjectId());
+                        fwdHeader->setPriority(srcObj->getPriority());
+                        fwdHeader->setPayloadLength(srcObj->getPayloadLength());
+                        fwdHeader->setCreationTime(srcObj->getCreationTime());
+                        fwdHeader->setChunkLength(inet::B(64));
 
                         auto fwdPacket = new inet::Packet("TRACK_OBJ_FWD");
-                        fwdPacket->insertAtBack(frontChunk);
+                        fwdPacket->insertAtBack(fwdHeader);
                         subSocketIt->second->send(fwdPacket, subStreamIt->second);
                         forward_count[subscriberId] += 1;
-                        EV_INFO << "Forwarded object chunk to subscriber " << subscriberId
-                                << " on streamId=" << subStreamIt->second << " For subsciber " << subscriberId << ": " <<
-                                 forward_count[subscriberId] << "packets were send." << std::endl;
+                        EV_INFO << "Forwarded object to subscriber " << subscriberId
+                                << " trackAlias=" << srcObj->getTrackAlias()
+                                << " objectId=" << srcObj->getObjectId()
+                                << " payloadLength=" << srcObj->getPayloadLength()
+                                << " count=" << forward_count[subscriberId] << std::endl;
                     }
                 }
                 else
@@ -222,12 +265,12 @@ namespace moqveinssim
 
     void MoqRelayApp::socketSendQueueFull(inet::QuicSocket *socket)
     {
-        sendingAllowed = false;
+        EV_WARN << "Send queue full, QUIC will handle backpressure" << std::endl;
     }
 
     void MoqRelayApp::socketSendQueueDrain(inet::QuicSocket *socket)
     {
-        sendingAllowed = true;
+        EV_DEBUG << "Send queue drained" << std::endl;
     }
 
     void MoqRelayApp::handleMessageWhenUp(omnetpp::cMessage *msg)
