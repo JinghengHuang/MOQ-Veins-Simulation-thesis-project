@@ -16,7 +16,9 @@ SUMO <-> Veins <-> OMNeT++
 
 ## Next Steps
 
-Experiment on simulating 5G networks between vehicles and integrate MoQ within this system
+Implement TCP/UDP model similar to MOQ model and compare performance between MOQ Model and TCP/UDP
+
+✔ Experiment on simulating 5G networks between vehicles and integrate MoQ within this system
 
 ✔ Simulating 5G networks between vehicles, by integrating Veins with INET and Simu5G module
 Ongoing: Integrate MoQ

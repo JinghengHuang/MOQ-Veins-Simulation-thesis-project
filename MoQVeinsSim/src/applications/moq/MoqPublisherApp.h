@@ -38,9 +38,22 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
         inet::cMessage *timerLimitRuntime;
         std::unordered_map<int, TrackMeta> tracks;
         std::unordered_map<int, int> trackToStreamMap;
+        int nextStreamId = 0; // next QUIC stream id to assign (client bidi: 0,4,8,...)
         inet::L3Address connectAddress;
         unsigned int connectPort;
         bool sendingAllowed = false;
+
+        // ---- metrics ----
+        // Emitted once per data object sent, carrying the object payload size in bytes.
+        // Aggregated by @statistic into a count (objects offered) and sum (bytes offered).
+        omnetpp::simsignal_t objectSentSignal = -1;
+        struct PubTrackStat {
+            long objectsSent = 0;
+            long bytesSent = 0;
+            omnetpp::simtime_t firstSendTime = -1;
+            omnetpp::simtime_t lastSendTime = -1;
+        };
+        std::unordered_map<long, PubTrackStat> pubStats; // keyed by trackId
     protected:
         inet::QuicSocket socket;
         virtual void handleMessageWhenUp(inet::cMessage *msg) override;
@@ -61,6 +74,7 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
         virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
         virtual void sendTrackAnnouncementData();
         virtual void sendTrackData(long tid);
+        virtual void finish() override;
         void handleTimeout(omnetpp::cMessage *msg);
 };
 }

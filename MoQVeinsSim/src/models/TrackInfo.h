@@ -28,8 +28,9 @@ namespace moqveinssim
         omnetpp::simtime_t sendInterval = omnetpp::simTime();
         int priority = 0;
         long nextObjectId = 0;
+        omnetpp::simtime_t deadline = 0; // per-track latency deadline (0 = no deadline)
         omnetpp::cMessage *timer = nullptr;
-        
+
 
         bool operator==(const TrackMeta& other) const {
             return publisherId == other.publisherId

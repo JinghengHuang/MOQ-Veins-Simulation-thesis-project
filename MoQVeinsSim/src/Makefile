@@ -42,12 +42,14 @@ OBJS = \
     $O/applications/udp/UdpApp.o \
     $O/applications/udp/UdpDatagramSink.o \
     $O/utils/StringUtils.o \
+    $O/models/MoqObjectAck_m.o \
     $O/models/MoqObjectChunk_m.o \
     $O/models/MoqPublisherAnnounce_m.o \
     $O/models/MoqSubscriber_m.o
 
 # Message files
 MSGFILES = \
+    models/MoqObjectAck.msg \
     models/MoqObjectChunk.msg \
     models/MoqPublisherAnnounce.msg \
     models/MoqSubscriber.msg

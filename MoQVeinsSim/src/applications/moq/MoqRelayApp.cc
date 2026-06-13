@@ -15,6 +15,7 @@ date: 5/15/2026
 #include "models/MoqSubscriber_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
 #include "models/MoqObjectChunk_m.h"
+#include "models/MoqObjectAck_m.h"
 
 namespace moqveinssim
 {
@@ -43,6 +44,10 @@ namespace moqveinssim
     void MoqRelayApp::handleStartOperation(inet::LifecycleOperation *operation)
     {
         EV_DEBUG << "initialize MoqRelayApp" << std::endl;
+
+        relayQueueDepthSignal = registerSignal("relayQueueDepth");
+        relayForwardDelaySignal = registerSignal("relayForwardDelay");
+        objectForwardedSignal = registerSignal("objectForwarded");
 
         socket.setOutputGate(gate("socketOut"));
         socket.setCallback(this);
@@ -85,6 +90,9 @@ namespace moqveinssim
     void MoqRelayApp::socketDataAvailable(inet::QuicSocket *peerSocket, inet::QuicDataInfo *dataInfo)
     {
         // QUIC signals that stream data is ready; request delivery as a QUIC_I_DATA packet.
+        // Remember the stream id: the delivered packet carries no stream tag, so we map it
+        // back via this FIFO queue in socketDataArrived.
+        pendingRecvStreams[peerSocket->getSocketId()].push_back(dataInfo->getStreamID());
         peerSocket->recv(static_cast<int64_t>(dataInfo->getAvaliableDataSize()), dataInfo->getStreamID());
     }
 
@@ -94,10 +102,30 @@ namespace moqveinssim
         // Identify message type by dynamic-casting the leading chunk.
         auto frontChunk = packet->peekAtFront<inet::Chunk>();
         EV_DEBUG << "Received packet: " << packet->getFullName() << " With header: " << frontChunk.get()->getClassName() << std::endl;
+
+        // Resolve the receive stream id from the FIFO recorded at data-available time
+        // (the QuicStreamReq tag does not survive to the receiver).
+        long recvStreamId = 0;
+        {
+            auto& q = pendingRecvStreams[peerSocket->getSocketId()];
+            if (!q.empty()) { recvStreamId = q.front(); q.pop_front(); }
+        }
+
         const auto *announceHeader = dynamic_cast<const MoqPublisherAnnounce *>(frontChunk.get());
         const auto *subHeader = dynamic_cast<const MoqSubscriber *>(frontChunk.get());
+        const auto *ackHeader = dynamic_cast<const MoqObjectAck *>(frontChunk.get());
 
-        if (announceHeader != nullptr)
+        if (ackHeader != nullptr)
+        {
+            // Subscriber confirmed delivery of an object — release the stream to forward
+            // the next queued object for this (subscriber, track).
+            std::string sid = ackHeader->getSubscriberId();
+            std::string trackAlias = std::string(ackHeader->getTrackNamespace()) + "/" + ackHeader->getTrackName();
+            EV_DEBUG << "OBJECT_ACK from " << sid << " for " << trackAlias
+                     << " objectId=" << ackHeader->getObjectId() << std::endl;
+            handleObjectAck(sid, trackAlias);
+        }
+        else if (announceHeader != nullptr)
         {
             EV_DEBUG << "ANNOUNCE packet received" << std::endl;
             std::string pid = std::to_string(announceHeader->getPublisherId());
@@ -121,8 +149,7 @@ namespace moqveinssim
             EV_INFO << "Registered track " << tm.trackAlias << " from publisher " << pid << std::endl;
             EV_INFO << "Track counts: " << publishedTracks.size() << std::endl;
 
-            auto streamTag = packet->findTag<inet::QuicStreamReq>();
-            long streamId = streamTag ? streamTag->getStreamID() : 0;
+            long streamId = recvStreamId;
 
             // Record which (socket, stream) carries data objects for this track.
             // The publisher reuses the same stream for TRACK_OBJ after ANNOUNCE.
@@ -143,11 +170,10 @@ namespace moqveinssim
             std::string sid = subHeader->getSubscriberId();
             std::string trackAlias = std::string(subHeader->getTrackNamespace()) + "/" + subHeader->getTrackName();
 
-            auto streamTag = packet->findTag<inet::QuicStreamReq>();
-            long streamId = streamTag ? streamTag->getStreamID() : 0;
+            long streamId = recvStreamId;
 
             subscriberSockets[sid] = peerSocket;
-            subscriberStreamIds[sid] = streamId;
+            subscriberStreamIds[{sid, trackAlias}] = streamId;
 
             EV_INFO << "Subscriber " << sid << " subscribed to " << trackAlias
                     << " on streamId=" << streamId << std::endl;
@@ -156,37 +182,28 @@ namespace moqveinssim
         }
         else
         {
-            // Not a control message — treat as TRACK_OBJ data.
-            // Large objects (e.g. PCloud) arrive as SliceChunk fragments from QUIC.
-            // Unwrap to get the underlying MoqObjectChunk; only forward on the first
-            // slice (offset==0) to avoid re-fragmentation on the relay→subscriber link,
-            // which would cause QUIC at the subscriber to misinterpret SliceChunks as
-            // FrameHeaders and crash.
-            auto streamTag = packet->findTag<inet::QuicStreamReq>();
-            long streamId = streamTag ? streamTag->getStreamID() : 0;
+            // TRACK_OBJ data. The QUIC stream is a byte stream, so a large object
+            // (e.g. PCloud) is delivered as a sequence of SliceChunk fragments while a
+            // small object (e.g. BBox) arrives as a single complete MoqObjectChunk.
+            // We store-and-forward: accumulate fragments per object and, once the whole
+            // object has been received, forward a single full-size MoqObjectChunk
+            // downstream (mirroring the publisher's send pattern so QUIC re-fragments it
+            // safely as SliceChunks rather than a SequenceChunk).
+            long streamId = recvStreamId;
             int socketId = peerSocket->getSocketId();
 
-            EV_DEBUG << "Non-control packet on socketId=" << socketId
-                     << " streamId=" << streamId
-                     << " chunk=" << frontChunk.get()->getClassName() << std::endl;
-
-            // Resolve the actual MoqObjectChunk regardless of whether the front chunk
-            // is a complete MoqObjectChunk or a SliceChunk wrapping one.
+            // Resolve the underlying MoqObjectChunk and how many payload+header bytes
+            // this particular delivery carries.
             const MoqObjectChunk *srcObj = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
-            bool isFirstChunk = (srcObj != nullptr);
-            if (srcObj == nullptr) {
+            long sliceBytes = 0;
+            if (srcObj != nullptr) {
+                sliceBytes = inet::B(srcObj->getChunkLength()).get();
+            } else {
                 const auto *sc = dynamic_cast<const inet::SliceChunk *>(frontChunk.get());
                 if (sc != nullptr) {
                     srcObj = dynamic_cast<const MoqObjectChunk *>(sc->getChunk().get());
-                    isFirstChunk = (sc->getOffset() == inet::b(0));
+                    sliceBytes = inet::B(sc->getLength()).get();
                 }
-            }
-
-            if (!isFirstChunk) {
-                // Non-first slice of a large object — skip; the first slice already
-                // triggered the forwarding for this object.
-                delete packet;
-                return;
             }
             if (srcObj == nullptr) {
                 EV_WARN << "Received non-MoqObjectChunk data on socketId=" << socketId
@@ -195,70 +212,207 @@ namespace moqveinssim
                 return;
             }
 
-            auto trackIt = publisherStreamToTrack.find({socketId, streamId});
-            if (trackIt != publisherStreamToTrack.end())
-            {
-                TrackKey tKey{trackIt->second.first, trackIt->second.second};
-                auto subsIt = subscriberByTrack.find(tKey);
-                if (subsIt != subscriberByTrack.end() && !subsIt->second.empty())
-                {
-                    EV_DEBUG << "Forwarding object data for track "
-                             << tKey.trackNamespace << "/" << tKey.trackName
-                             << " to " << subsIt->second.size() << " subscriber(s)" << std::endl;
-
-                    for (const auto &subscriberId : subsIt->second)
-                    {
-                        auto subSocketIt = subscriberSockets.find(subscriberId);
-                        auto subStreamIt = subscriberStreamIds.find(subscriberId);
-                        if (subSocketIt == subscriberSockets.end() || subStreamIt == subscriberStreamIds.end())
-                        {
-                            EV_WARN << "Subscriber " << subscriberId << " has no registered socket or stream, skipping" << std::endl;
-                            continue;
-                        }
-
-                        // Reconstruct a header-only MoqObjectChunk (64 B) for forwarding.
-                        // This keeps the forwarded packet small (no re-fragmentation) and
-                        // preserves all metadata the subscriber needs to log.
-                        auto fwdHeader = inet::makeShared<MoqObjectChunk>();
-                        fwdHeader->setTrackId(srcObj->getTrackId());
-                        fwdHeader->setTrackAlias(srcObj->getTrackAlias());
-                        fwdHeader->setGroupId(srcObj->getGroupId());
-                        fwdHeader->setObjectId(srcObj->getObjectId());
-                        fwdHeader->setPriority(srcObj->getPriority());
-                        fwdHeader->setPayloadLength(srcObj->getPayloadLength());
-                        fwdHeader->setCreationTime(srcObj->getCreationTime());
-                        fwdHeader->setChunkLength(inet::B(64));
-
-                        auto fwdPacket = new inet::Packet("TRACK_OBJ_FWD");
-                        fwdPacket->insertAtBack(fwdHeader);
-                        subSocketIt->second->send(fwdPacket, subStreamIt->second);
-                        forward_count[subscriberId] += 1;
-                        EV_INFO << "Forwarded object to subscriber " << subscriberId
-                                << " trackAlias=" << srcObj->getTrackAlias()
-                                << " objectId=" << srcObj->getObjectId()
-                                << " payloadLength=" << srcObj->getPayloadLength()
-                                << " count=" << forward_count[subscriberId] << std::endl;
-                    }
+            auto key = std::make_tuple(socketId, streamId, (long) srcObj->getObjectId());
+            RelayObjReasm& st = reasm[key];
+            if (st.totalBytes == 0) {
+                // First fragment of this object: snapshot metadata, start the relay timer
+                // and grow the reassembly backlog (relay queue depth).
+                st.totalBytes = 64 + srcObj->getPayloadLength();
+                st.firstSliceTime = omnetpp::simTime();
+                st.trackId = srcObj->getTrackId();
+                st.trackAlias = srcObj->getTrackAlias();
+                st.groupId = srcObj->getGroupId();
+                st.objectId = srcObj->getObjectId();
+                st.priority = srcObj->getPriority();
+                st.payloadLength = srcObj->getPayloadLength();
+                st.creationTime = srcObj->getCreationTime();
+                auto trackIt = publisherStreamToTrack.find({socketId, streamId});
+                if (trackIt != publisherStreamToTrack.end()) {
+                    st.trackNamespace = trackIt->second.first;
+                    st.trackName = trackIt->second.second;
+                } else {
+                    EV_WARN << "Object on unknown stream (socketId=" << socketId
+                            << " streamId=" << streamId << "), track namespace unresolved" << std::endl;
                 }
-                else
-                {
-                    EV_DEBUG << "No subscribers for track "
-                             << tKey.trackNamespace << "/" << tKey.trackName
-                             << ", dropping object data" << std::endl;
-                }
+                emit(relayQueueDepthSignal, (long) reasm.size());
             }
-            else
-            {
-                EV_WARN << "Received data on unknown stream (socketId=" << socketId
-                        << " streamId=" << streamId << "), discarding" << std::endl;
+            st.receivedBytes += sliceBytes;
+
+            if (st.receivedBytes >= st.totalBytes) {
+                // Object fully reassembled — forward it and shrink the backlog.
+                RelayObjReasm completed = st;
+                reasm.erase(key);
+                forwardCompletedObject(completed);
+                emit(relayQueueDepthSignal, (long) reasm.size());
             }
         }
         delete packet;
     }
 
+    // Queue a fully reassembled object for forwarding to every subscriber of its track.
+    // Actual transmission is paced per (subscriber, track) stream by tryFlushStream so that
+    // only one object is in flight per stream at a time (see ForwardItem docs).
+    void MoqRelayApp::forwardCompletedObject(const RelayObjReasm& obj)
+    {
+        TrackKey tKey{obj.trackNamespace, obj.trackName};
+        auto subsIt = subscriberByTrack.find(tKey);
+        if (subsIt == subscriberByTrack.end() || subsIt->second.empty()) {
+            EV_DEBUG << "No subscribers for track " << obj.trackAlias
+                     << ", dropping object data" << std::endl;
+            return;
+        }
+
+        for (const auto& subscriberId : subsIt->second) {
+            auto subStreamIt = subscriberStreamIds.find({subscriberId, obj.trackAlias});
+            if (subscriberSockets.find(subscriberId) == subscriberSockets.end()
+                || subStreamIt == subscriberStreamIds.end()) {
+                EV_WARN << "Subscriber " << subscriberId << " has no registered socket or stream, skipping" << std::endl;
+                continue;
+            }
+
+            ForwardItem item;
+            item.subscriberId = subscriberId;
+            item.streamId = subStreamIt->second;
+            item.firstSliceTime = obj.firstSliceTime;
+            item.trackId = obj.trackId;
+            item.trackAlias = obj.trackAlias;
+            item.groupId = obj.groupId;
+            item.objectId = obj.objectId;
+            item.priority = obj.priority;
+            item.payloadLength = obj.payloadLength;
+            item.creationTime = obj.creationTime;
+
+            auto key = std::make_pair(subscriberId, obj.trackAlias);
+            auto& fifo = streamFifo[key];
+            // Finite relay buffer: drop the oldest queued object on overflow (counts as loss).
+            if (fifo.size() >= maxFifoPerStream) {
+                fifo.pop_front();
+                pendingForwardCount--;
+                relayDroppedTotal++;
+                EV_WARN << "Forward queue overflow for " << subscriberId << "/" << obj.trackAlias
+                        << ", dropping oldest object" << std::endl;
+            }
+            fifo.push_back(item);
+            pendingForwardCount++;
+            emit(relayQueueDepthSignal, pendingForwardCount);
+
+            tryFlushStream(subscriberId, obj.trackAlias);
+        }
+    }
+
+    // Send the next queued object on a (subscriber, track) stream if none is in flight.
+    void MoqRelayApp::tryFlushStream(const std::string& subscriberId, const std::string& trackAlias)
+    {
+        auto key = std::make_pair(subscriberId, trackAlias);
+        if (streamBusy[key]) {
+            return; // an object is already in flight on this stream
+        }
+        auto fit = streamFifo.find(key);
+        if (fit == streamFifo.end() || fit->second.empty()) {
+            return;
+        }
+        auto subSocketIt = subscriberSockets.find(subscriberId);
+        if (subSocketIt == subscriberSockets.end()) {
+            // Subscriber gone — discard its queue.
+            pendingForwardCount -= fit->second.size();
+            fit->second.clear();
+            emit(relayQueueDepthSignal, pendingForwardCount);
+            return;
+        }
+
+        ForwardItem item = fit->second.front();
+        fit->second.pop_front();
+
+        // Forward a full-size object: inflate chunkLength to header + payload so QUIC
+        // re-fragments it into SliceChunks downstream, letting the subscriber measure
+        // true object completion time.
+        auto fwdHeader = inet::makeShared<MoqObjectChunk>();
+        fwdHeader->setTrackId(item.trackId);
+        fwdHeader->setTrackAlias(item.trackAlias.c_str());
+        fwdHeader->setGroupId(item.groupId);
+        fwdHeader->setObjectId(item.objectId);
+        fwdHeader->setPriority(item.priority);
+        fwdHeader->setPayloadLength(item.payloadLength);
+        fwdHeader->setCreationTime(item.creationTime);
+        fwdHeader->setChunkLength(inet::B(64 + item.payloadLength));
+
+        auto fwdPacket = new inet::Packet("TRACK_OBJ_FWD");
+        fwdPacket->insertAtBack(fwdHeader);
+        subSocketIt->second->send(fwdPacket, item.streamId);
+        streamBusy[key] = true;
+
+        forward_count[subscriberId] += 1;
+        objectsForwardedTotal++;
+        omnetpp::simtime_t forwardDelay = omnetpp::simTime() - item.firstSliceTime;
+        emit(relayForwardDelaySignal, forwardDelay.dbl()); // includes queueing wait
+        fwdDelaySum += forwardDelay.dbl();
+        if (forwardDelay.dbl() > fwdDelayMax) fwdDelayMax = forwardDelay.dbl();
+        fwdDelayCount++;
+        emit(objectForwardedSignal, (long) item.payloadLength);
+        EV_INFO << "Forwarded object to subscriber " << subscriberId
+                << " trackAlias=" << item.trackAlias
+                << " objectId=" << item.objectId
+                << " payloadLength=" << item.payloadLength
+                << " relayDelay=" << forwardDelay
+                << " count=" << forward_count[subscriberId] << std::endl;
+    }
+
+    // Subscriber acknowledged an object — release the stream and forward the next one.
+    void MoqRelayApp::handleObjectAck(const std::string& subscriberId, const std::string& trackAlias)
+    {
+        auto key = std::make_pair(subscriberId, trackAlias);
+        if (streamBusy[key]) {
+            streamBusy[key] = false;
+            pendingForwardCount--; // the in-flight object has left the relay
+            emit(relayQueueDepthSignal, pendingForwardCount);
+        }
+        tryFlushStream(subscriberId, trackAlias);
+    }
+
+    void MoqRelayApp::finish()
+    {
+        recordScalar("objectsForwardedTotal", objectsForwardedTotal);
+        recordScalar("objectsInReassemblyAtEnd", (long) reasm.size());
+        recordScalar("objectsDroppedQueueOverflow", relayDroppedTotal);
+        recordScalar("objectsPendingForwardAtEnd", pendingForwardCount);
+        if (fwdDelayCount > 0) {
+            recordScalar("meanForwardDelay", fwdDelaySum / fwdDelayCount, "s");
+            recordScalar("maxForwardDelay", fwdDelayMax, "s");
+        }
+        for (auto& fc : forward_count) {
+            recordScalar(("subscriber[" + fc.first + "].objectsForwarded").c_str(), fc.second);
+        }
+    }
+
     void MoqRelayApp::socketClosed(inet::QuicSocket *closedSocket)
     {
         EV_INFO << "socketClosed, socketId=" << closedSocket->getSocketId() << std::endl;
+
+        // Release any forwarding state held for subscribers on this connection so their
+        // queues do not leak and the queue-depth metric stays accurate.
+        std::vector<std::string> goneSubscribers;
+        for (auto& entry : subscriberSockets) {
+            if (entry.second == closedSocket) {
+                goneSubscribers.push_back(entry.first);
+            }
+        }
+        for (const auto& sid : goneSubscribers) {
+            for (auto it = streamFifo.begin(); it != streamFifo.end(); ) {
+                if (it->first.first == sid) {
+                    pendingForwardCount -= it->second.size();
+                    if (streamBusy[it->first]) pendingForwardCount--; // in-flight object lost
+                    streamBusy.erase(it->first);
+                    it = streamFifo.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            subscriberSockets.erase(sid);
+        }
+        if (!goneSubscribers.empty()) {
+            emit(relayQueueDepthSignal, pendingForwardCount);
+        }
+
         socketMap.removeSocket(closedSocket);
         delete closedSocket;
     }

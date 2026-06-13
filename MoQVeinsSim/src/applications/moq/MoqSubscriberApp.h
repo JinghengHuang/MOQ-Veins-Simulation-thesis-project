@@ -8,6 +8,9 @@ Date: 5/15/2026
 #pragma once
 
 #include <vector>
+#include <map>
+#include <string>
+#include <utility>
 #include <omnetpp.h>
 #include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
@@ -38,10 +41,50 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         inet::cMessage *timerLimitRuntime;
         std::unordered_map<int, TrackMeta> tracks;
         std::unordered_map<int, int> trackToStreamMap;
+        int nextStreamId = 0; // next QUIC stream id to assign (client bidi: 0,4,8,...)
         inet::L3Address connectAddress;
         int receive_count = 0;
         unsigned int connectPort;
         bool sendingAllowed = false;
+
+        // ---- metrics ----
+        // Per completed object: end-to-end latency (creation->fully received) in seconds.
+        omnetpp::simsignal_t endToEndLatencySignal = -1;
+        // Per completed object: completion time (first fragment->last fragment) in seconds.
+        omnetpp::simsignal_t objectCompletionTimeSignal = -1;
+        // Per completed object (from the 2nd onward, per track): |L_i - L_{i-1}| in seconds.
+        omnetpp::simsignal_t e2eJitterSignal = -1;
+        // Per completed object: 1 if latency exceeded the track deadline, else 0.
+        // The @statistic mean of this signal is the deadline miss ratio.
+        omnetpp::simsignal_t deadlineMissSignal = -1;
+
+        // In-progress reassembly of a downstream object, keyed by (trackAlias, objectId).
+        struct SubObjReasm {
+            long totalBytes = 0;   // 64 (header) + payloadLength
+            long receivedBytes = 0;
+            omnetpp::simtime_t firstSliceTime = 0;
+            omnetpp::simtime_t creationTime = 0;
+            long payloadLength = 0;
+            long trackId = -1;
+        };
+        std::map<std::pair<std::string, long>, SubObjReasm> reasm;
+
+        struct SubTrackStat {
+            long received = 0;
+            long bytes = 0;
+            long highestObjId = -1;
+            omnetpp::simtime_t firstRecv = -1;
+            omnetpp::simtime_t lastRecv = -1;
+            double lastLatency = -1;
+            long deadlineMisses = 0;
+            omnetpp::simtime_t deadline = 0;
+            double latencySum = 0;   // sum of end-to-end latencies (for per-track mean)
+            double latencyMax = 0;   // worst-case per-track end-to-end latency
+            double completionSum = 0; double completionMax = 0; // object completion time
+            double jitterSum = 0; long jitterCount = 0;         // |L_i - L_i-1| jitter
+        };
+        std::unordered_map<std::string, SubTrackStat> subStats; // keyed by trackAlias
+        SubTrackStat& trackStat(const std::string& trackAlias);
     protected:
         inet::QuicSocket socket;
         virtual void handleMessageWhenUp(inet::cMessage *msg) override;
@@ -61,6 +104,7 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
         virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
         virtual void sendTrackSubscribeData();
+        virtual void finish() override;
         void handleTimeout(omnetpp::cMessage *msg);
 };
 }

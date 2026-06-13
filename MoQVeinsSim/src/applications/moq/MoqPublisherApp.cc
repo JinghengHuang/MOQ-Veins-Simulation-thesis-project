@@ -2,10 +2,11 @@
 
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
+#include "inet/common/packet/chunk/BytesChunk.h"
 #include "veins/modules/mobility/traci/TraCIMobility.h"
-#include "models/MoqObjectChunk_m.h"
 #include "models/MoqPublisherAnnounce_m.h"
 #include "models/MoqSubscriber_m.h"
+#include "models/MoqFraming.h"
 #include <algorithm>
 
 #include <omnetpp.h>
@@ -93,25 +94,22 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             case SUB_SUCCESS:
                 if (it != tracks.end()) {
                     track = &it->second;
-                    // Send track packet with data stream
+                    // Send the object as a MoQ-style length-prefixed byte frame. Encoding
+                    // the whole object (header + payload) as one BytesChunk lets consecutive
+                    // objects coalesce on the stream instead of forming a SequenceChunk, and
+                    // makes objects self-delimiting (the receiver frames by length).
                     packet = new inet::Packet("TRACK_OBJ");
-                    inet::Ptr<MoqObjectChunk> header = inet::makeShared<MoqObjectChunk>();
-                    header->setTrackId(track->trackId);
-                    header->setTrackAlias(track->trackAlias.c_str());
-                    header->setPriority(track->priority);
-                    header->setObjectId(track->nextObjectId);
-                    header->setPayloadLength(track->packetSize);
-                    header->setCreationTime(omnetpp::simTime());
-                    header->setGroupId(0); // for now all group is 0, will see if its necessary to implement group or only track/object is enough
-                    
+                    MoqObjectFrame f;
+                    f.trackId = track->trackId;
+                    f.trackAlias = track->trackAlias;
+                    f.groupId = 0; // single group for now
+                    f.objectId = track->nextObjectId;
+                    f.priority = track->priority;
+                    f.payloadLength = track->packetSize;
+                    f.creationTime = omnetpp::simTime();
                     track->nextObjectId++;
-                    // Inflate chunkLength to cover both the header fields and the payload.
-                    // This keeps the packet as a single chunk so QUIC fragments it as
-                    // SliceChunks rather than a SequenceChunk — SequenceChunk insertion
-                    // flattens sub-chunks individually, which confuses the receiver's QUIC
-                    // frame parser into treating leftover payload bytes as a FrameHeader.
-                    header->setChunkLength(inet::B(64 + track->packetSize));
-                    packet->insertAtBack(header);
+                    auto frameBytes = MoqFraming::encode(f);
+                    packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frameBytes));
                     EV_INFO << "Send track object data: " << track->trackAlias.c_str() << std::endl;
                     // Arrange sending another packet of the same event
                     sendTrackData(tid);
@@ -126,19 +124,32 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             // stream mapping
             // QUIC stream id rule: 62 bit unsigned int with least significant bit meaning sender of the packet(client/server) and 2nd lowest meaning direction(uni/bi)
             // start from 0 and +4 each time means send by client and bidirectional
-            // for each track a unique stream
+            // Each track gets its own unique stream so that a large slow-draining object
+            // (e.g. PCloud) never shares a stream send buffer with another track's object.
+            // Two distinct chunks adjacent in one stream buffer would be merged into a
+            // SequenceChunk by QUIC, which flattens on insertion and corrupts framing at
+            // the receiver.
             auto iter = trackToStreamMap.find(tid);
-            int nextStartStreamId = 0;
             if (iter == trackToStreamMap.end()) {
-                trackToStreamMap[tid] = nextStartStreamId;
-                nextStartStreamId += 4;
+                trackToStreamMap[tid] = nextStreamId;
+                nextStreamId += 4;
+                iter = trackToStreamMap.find(tid);
             }
-            iter = trackToStreamMap.find(tid);
             if (iter != trackToStreamMap.end() && track != nullptr && packet != nullptr) {
                 int streamId = iter->second;
-                packet->addTagIfAbsent<inet::QuicStreamReq>()->setStreamID(streamId);
-
-                socket.send(packet);
+                // Use the 2-arg send: the 1-arg send(packet) internally calls
+                // send(packet, 0) and would overwrite the stream ID back to 0,
+                // forcing every track onto stream 0 (causing cross-track merges).
+                socket.send(packet, streamId);
+                if (id == SUB_SUCCESS) {
+                    // Record one data object offered to the network for this track.
+                    PubTrackStat& ps = pubStats[track->trackId];
+                    ps.objectsSent++;
+                    ps.bytesSent += track->packetSize;
+                    if (ps.firstSendTime < SIMTIME_ZERO) ps.firstSendTime = omnetpp::simTime();
+                    ps.lastSendTime = omnetpp::simTime();
+                    emit(objectSentSignal, (long) track->packetSize);
+                }
                 EV_INFO << "sendData - track " << track->trackId << " - name " << track->trackName << " - size " << track->packetSize << " B" << " - streamId  " << streamId << std::endl;
             }
         }
@@ -155,6 +166,8 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
 void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
 {
     EV_DEBUG << "initialize MoqPublisherApp" << std::endl;
+
+    objectSentSignal = registerSignal("objectSent");
 
     connectPort = par("connectPort");
     connectAddress = inet::L3AddressResolver().resolve(par("connectAddress"));
@@ -251,6 +264,22 @@ void MoqPublisherApp::socketSendQueueFull(inet::QuicSocket *socket)
 void MoqPublisherApp::socketSendQueueDrain(inet::QuicSocket *socket)
 {
     EV_DEBUG << "Send queue drained" << std::endl;
+}
+
+void MoqPublisherApp::finish()
+{
+    // Per-track offered-load scalars, used as the denominator for object loss ratio.
+    for (auto& track : tracks) {
+        long tid = track.second.trackId;
+        const PubTrackStat& ps = pubStats[tid];
+        std::string prefix = "track[" + track.second.trackAlias + "].";
+        recordScalar((prefix + "objectsSent").c_str(), ps.objectsSent);
+        recordScalar((prefix + "bytesSent").c_str(), ps.bytesSent, "B");
+        double span = (ps.lastSendTime - ps.firstSendTime).dbl();
+        if (span > 0) {
+            recordScalar((prefix + "offeredRate").c_str(), ps.bytesSent * 8.0 / span, "bps");
+        }
+    }
 }
 
 // Based on track configurations, send track announcement data
