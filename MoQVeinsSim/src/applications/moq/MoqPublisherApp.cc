@@ -4,8 +4,6 @@
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/common/packet/chunk/BytesChunk.h"
 #include "veins/modules/mobility/traci/TraCIMobility.h"
-#include "models/MoqPublisherAnnounce_m.h"
-#include "models/MoqSubscriber_m.h"
 #include "models/MoqFraming.h"
 #include <algorithm>
 
@@ -76,19 +74,19 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             case PUB_ANNOUNCE:
                 if (it != tracks.end()) {
                     track = &it->second;
-                    // Send track packet, just announcement
+                    // Announce as a length-prefixed control byte frame on the control stream.
                     packet = new inet::Packet("ANNOUNCE");
-                    inet::Ptr<MoqPublisherAnnounce> header = inet::makeShared<MoqPublisherAnnounce>();
-                    header->setTrackId(track->trackId);
-                    header->setTrackNamespace(track->trackNamespace.c_str());
-                    header->setTrackName(track->trackName.c_str());
-                    header->setTrackAlias(track->trackAlias.c_str());
-                    header->setPriority(track->priority);
-                    header->setSendInterval(track->sendInterval);
-                    header->setPayloadSize(track->packetSize);
-                    header->setChunkLength(inet::B(64));
-                    packet->insertAtBack(header);
-
+                    MoqControlFrame c;
+                    c.type = CTRL_ANNOUNCE;
+                    c.trackId = track->trackId;
+                    c.publisherId = track->publisherId;
+                    c.priority = track->priority;
+                    c.payloadSize = track->packetSize;
+                    c.sendInterval = track->sendInterval;
+                    c.trackNamespace = track->trackNamespace;
+                    c.trackName = track->trackName;
+                    c.trackAlias = track->trackAlias;
+                    packet->insertAtBack(inet::makeShared<inet::BytesChunk>(MoqFraming::encodeControl(c)));
                 }
                 break;
             case SUB_SUCCESS:
@@ -121,25 +119,23 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 break;
             }
             
-            // stream mapping
-            // QUIC stream id rule: 62 bit unsigned int with least significant bit meaning sender of the packet(client/server) and 2nd lowest meaning direction(uni/bi)
-            // start from 0 and +4 each time means send by client and bidirectional
-            // Each track gets its own unique stream so that a large slow-draining object
-            // (e.g. PCloud) never shares a stream send buffer with another track's object.
-            // Two distinct chunks adjacent in one stream buffer would be merged into a
-            // SequenceChunk by QUIC, which flattens on insertion and corrupts framing at
-            // the receiver.
-            auto iter = trackToStreamMap.find(tid);
-            if (iter == trackToStreamMap.end()) {
-                trackToStreamMap[tid] = nextStreamId;
-                nextStreamId += 4;
-                iter = trackToStreamMap.find(tid);
-            }
-            if (iter != trackToStreamMap.end() && track != nullptr && packet != nullptr) {
-                int streamId = iter->second;
-                // Use the 2-arg send: the 1-arg send(packet) internally calls
-                // send(packet, 0) and would overwrite the stream ID back to 0,
-                // forcing every track onto stream 0 (causing cross-track merges).
+            // Stream mapping: control (ANNOUNCE) goes on the control stream; object data
+            // goes on a per-track DATA stream (client-bidi 4,8,...). Keeping data streams
+            // homogeneous (only byte frames) is what makes the framing safe.
+            if (track != nullptr && packet != nullptr) {
+                long streamId;
+                if (id == PUB_ANNOUNCE) {
+                    streamId = CONTROL_STREAM;
+                } else { // SUB_SUCCESS data
+                    auto iter = trackToStreamMap.find(tid);
+                    if (iter == trackToStreamMap.end()) {
+                        trackToStreamMap[tid] = nextStreamId;
+                        nextStreamId += 4;
+                        iter = trackToStreamMap.find(tid);
+                    }
+                    streamId = iter->second;
+                }
+                // Use the 2-arg send: the 1-arg send(packet) resets the stream id to 0.
                 socket.send(packet, streamId);
                 if (id == SUB_SUCCESS) {
                     // Record one data object offered to the network for this track.
@@ -224,6 +220,8 @@ void MoqPublisherApp::handleCrashOperation(inet::LifecycleOperation *operation)
 }
 
 void MoqPublisherApp::socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) {
+    // Record the stream id; the delivered packet carries no stream tag.
+    pendingRecvStreams.push_back(dataInfo->getStreamID());
     socket->recv(static_cast<int64_t>(dataInfo->getAvaliableDataSize()), dataInfo->getStreamID());
 }
 
@@ -234,20 +232,33 @@ void MoqPublisherApp::socketEstablished(inet::QuicSocket *socket) {
 }
 
 void MoqPublisherApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) {
-    EV_INFO << "Data arrived: " << packet->getName() << std::endl;
-    auto frontChunk = packet->peekAtFront<inet::Chunk>();
-    const auto *subscribeOkHeader = dynamic_cast<const MoqSubscriber *>(frontChunk.get());
-    if (subscribeOkHeader != nullptr) {
-        std::string trackAlias = std::string(subscribeOkHeader->getTrackNamespace()) + "/" + subscribeOkHeader->getTrackName();
-        for (auto& entry : tracks) {
-            TrackMeta& track = entry.second;
-            if (track.trackAlias == trackAlias) {
-                cancelEvent(track.timer);
-                track.timer->setKind(SUB_SUCCESS);
-                scheduleAt(omnetpp::simTime(), track.timer);
-                EV_INFO << "SUBSCRIBE_OK for track: " << trackAlias << " - starting data transmission" << std::endl;
-                break;
+    long streamId = 0;
+    if (!pendingRecvStreams.empty()) { streamId = pendingRecvStreams.front(); pendingRecvStreams.pop_front(); }
+
+    // The publisher only receives control (SUBSCRIBE_OK) on the control stream, as
+    // length-prefixed byte frames. Accumulate and parse.
+    if (streamId == CONTROL_STREAM) {
+        auto bytes = packet->peekDataAsBytes();
+        const auto& vec = bytes->getBytes();
+        controlBuf.data.insert(controlBuf.data.end(), vec.begin(), vec.end());
+
+        MoqControlFrame c;
+        size_t consumed;
+        while (MoqFraming::tryParseControl(controlBuf.data, c, consumed)) {
+            if (c.type == CTRL_SUBSCRIBE_OK) {
+                std::string trackAlias = c.trackNamespace + "/" + c.trackName;
+                for (auto& entry : tracks) {
+                    TrackMeta& track = entry.second;
+                    if (track.trackAlias == trackAlias) {
+                        cancelEvent(track.timer);
+                        track.timer->setKind(SUB_SUCCESS);
+                        scheduleAt(omnetpp::simTime(), track.timer);
+                        EV_INFO << "SUBSCRIBE_OK for track: " << trackAlias << " - starting data transmission" << std::endl;
+                        break;
+                    }
+                }
             }
+            controlBuf.data.erase(controlBuf.data.begin(), controlBuf.data.begin() + consumed);
         }
     }
     delete packet;

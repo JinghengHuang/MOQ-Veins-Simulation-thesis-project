@@ -8,12 +8,14 @@ Date: 5/15/2026
 #pragma once
 
 #include <vector>
+#include <deque>
 #include <omnetpp.h>
 #include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/networklayer/common/L3Address.h"
 #include "models/TrackInfo.h"
+#include "models/MoqFraming.h"
 
 
 namespace moqveinssim {
@@ -37,11 +39,17 @@ class MoqPublisherApp : public inet::ApplicationBase, public inet::QuicSocket::I
         inet::cMessage *timerConnect;
         inet::cMessage *timerLimitRuntime;
         std::unordered_map<int, TrackMeta> tracks;
-        std::unordered_map<int, int> trackToStreamMap;
-        int nextStreamId = 0; // next QUIC stream id to assign (client bidi: 0,4,8,...)
+        std::unordered_map<int, int> trackToStreamMap; // trackId -> per-track DATA stream id
+        // Stream 0 is the control stream; data streams are client-bidi 4,8,...
+        static const long CONTROL_STREAM = 0;
+        int nextStreamId = 4; // next DATA stream id to assign (client bidi: 4,8,...)
         inet::L3Address connectAddress;
         unsigned int connectPort;
         bool sendingAllowed = false;
+
+        // Control is received as length-prefixed byte frames on the control stream.
+        std::deque<long> pendingRecvStreams; // recv stream ids (tag does not survive)
+        StreamReassembler controlBuf;        // byte buffer for the control stream
 
         // ---- metrics ----
         // Emitted once per data object sent, carrying the object payload size in bytes.

@@ -9,6 +9,7 @@ Date: 5/15/2026
 #define MOQRELAYAPP_H
 
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -21,6 +22,7 @@ Date: 5/15/2026
 #include "inet/networklayer/common/L3Address.h"
 #include "inet/common/socket/SocketMap.h"
 #include "models/TrackInfo.h"
+#include "models/MoqFraming.h"
 
 namespace moqveinssim {
 class MoqRelayApp : public inet::ApplicationBase, public inet::QuicSocket::ICallback {
@@ -62,68 +64,56 @@ private:
     bool sendingAllowed = false;
 
     // ---- metrics ----
-    // Number of objects currently being reassembled from upstream (publisher) streams,
-    // i.e. the relay's store-and-forward backlog. Emitted on every change.
+    // Number of objects queued for forwarding because a downstream socket is blocked
+    // (relay queue depth). Emitted on every change.
     omnetpp::simsignal_t relayQueueDepthSignal = -1;
-    // Per forwarded object: wall-clock time the object spent in the relay,
-    // from arrival of its first slice to the moment it is forwarded downstream.
+    // Per forwarded object: time from arrival of the object's first byte at the relay to
+    // the moment it is forwarded downstream (upstream reception + any queueing wait).
     omnetpp::simsignal_t relayForwardDelaySignal = -1;
     // Emitted once per object forwarded to (each) subscriber, carrying payload bytes.
     omnetpp::simsignal_t objectForwardedSignal = -1;
     long objectsForwardedTotal = 0;
-    double fwdDelaySum = 0; double fwdDelayMax = 0; long fwdDelayCount = 0; // store-and-forward delay
+    double fwdDelaySum = 0; double fwdDelayMax = 0; long fwdDelayCount = 0;
 
-    // Store-and-forward reassembly of an upstream object. An object is keyed by
-    // (publisher socketId, streamId, objectId); it is forwarded once fully received.
-    struct RelayObjReasm {
-        long totalBytes = 0;       // 64 (header) + payloadLength
-        long receivedBytes = 0;
-        omnetpp::simtime_t firstSliceTime = 0;
-        // metadata snapshot taken from the first slice
-        long trackId = -1;
-        std::string trackAlias;
-        long groupId = 0;
-        long objectId = 0;
-        long priority = 0;
-        long payloadLength = 0;
-        omnetpp::simtime_t creationTime = 0;
-        std::string trackNamespace;
-        std::string trackName;
-    };
-    std::map<std::tuple<int, long, long>, RelayObjReasm> reasm; // (socketId, streamId, objectId)
+    // The delivered packet carries no stream tag and the QUIC "data available" size is
+    // cumulative, so receives are serialized (one in flight per socket, draining a whole
+    // stream each time) and the delivered stream id is recvInFlight[socketId].
+    std::map<int, std::set<long>> recvPending; // socketId -> streams with undelivered data
+    std::map<int, long> recvInFlight;          // socketId -> stream of the outstanding recv
+    static const long CONTROL_STREAM = 0;
+    void startNextRecv(inet::QuicSocket* peerSocket);
 
-    // The QuicStreamReq tag is a send-side request and is NOT present on received packets,
-    // so the receive stream must be taken from QuicDataInfo at data-available time. recv()
-    // and socketDataArrived() are 1:1 and FIFO per connection, so we queue the stream id of
-    // each recv and dequeue it when the corresponding data is delivered.
-    std::map<int, std::deque<long>> pendingRecvStreams; // socketId -> queued recv stream ids
+    // Per-(socketId, streamId) byte buffers: control frames on stream 0, object frames on
+    // the others. Everything on the wire is a length-prefixed BytesChunk.
+    std::map<std::pair<int, long>, StreamReassembler> recvBuffers;
 
-    // A completed object queued for forwarding to one subscriber on one track stream.
-    struct ForwardItem {
-        std::string subscriberId;
+    // Downstream forwarding: pipelined. If a subscriber socket's QUIC send queue is full
+    // (socketSendQueueFull), objects are buffered here and flushed on drain.
+    struct FwdItem {
+        inet::QuicSocket* sock = nullptr;
         long streamId = 0;
-        omnetpp::simtime_t firstSliceTime = 0; // when the relay first received the object
-        long trackId = -1;
-        std::string trackAlias;
-        long groupId = 0;
-        long objectId = 0;
-        long priority = 0;
+        std::vector<uint8_t> bytes;
         long payloadLength = 0;
-        omnetpp::simtime_t creationTime = 0;
+        omnetpp::simtime_t firstByteTime = 0;
+        std::string subscriberId;
     };
-    // Per (subscriberId, trackAlias) forwarding queue and "object in flight" flag.
-    // Stop-and-wait: at most one object is in flight per stream; the next is sent only
-    // after the subscriber ACKs the previous one, guaranteeing the stream send buffer is
-    // empty so two objects never merge into a SequenceChunk.
-    std::map<std::pair<std::string, std::string>, std::deque<ForwardItem>> streamFifo;
-    std::map<std::pair<std::string, std::string>, bool> streamBusy;
-    long pendingForwardCount = 0;          // objects queued or in flight (relay queue depth)
-    long relayDroppedTotal = 0;            // objects dropped due to forwarding-queue overflow
-    static const size_t maxFifoPerStream = 1024; // finite relay buffer per stream
+    // Pipelined forwarding (QUIC governs in-flight via flow + congestion control). If a
+    // subscriber socket's QUIC send queue is full (socketSendQueueFull), objects are buffered
+    // here and flushed on drain; relayQueueDepth = total buffered.
+    std::map<int, std::deque<FwdItem>> socketFifo; // socketId -> backlog when blocked
+    std::map<int, bool> socketBlocked;             // socketId -> send queue full
+    long pendingForwardCount = 0;   // total queued objects (relay queue depth)
+    long relayDroppedTotal = 0;     // dropped due to forwarding-queue overflow
+    static const size_t maxFifoPerStream = 1024;
+    int nextDataStreamId = 1;       // relay->subscriber data stream ids (1,5,9,...)
 
-    void forwardCompletedObject(const RelayObjReasm& obj);
-    void tryFlushStream(const std::string& subscriberId, const std::string& trackAlias);
-    void handleObjectAck(const std::string& subscriberId, const std::string& trackAlias);
+    void handleControlFrame(inet::QuicSocket* peerSocket, const MoqControlFrame& c);
+    void onObjectFrame(const MoqObjectFrame& f, const std::vector<uint8_t>& frameBytes,
+                       omnetpp::simtime_t firstByteTime);
+    void forwardToSubscriber(const std::string& subscriberId, const MoqObjectFrame& f,
+                             const std::vector<uint8_t>& frameBytes, omnetpp::simtime_t firstByteTime);
+    void doForwardSend(const FwdItem& item);
+    void flushSocket(int socketId);
 protected:
     inet::QuicSocket socket;
     inet::SocketMap socketMap;

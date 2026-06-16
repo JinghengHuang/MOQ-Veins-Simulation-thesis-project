@@ -9,6 +9,7 @@ Date: 5/15/2026
 
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <omnetpp.h>
@@ -17,6 +18,7 @@ Date: 5/15/2026
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/networklayer/common/L3Address.h"
 #include "models/TrackInfo.h"
+#include "models/MoqFraming.h"
 
 
 namespace moqveinssim {
@@ -40,12 +42,20 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         inet::cMessage *timerConnect;
         inet::cMessage *timerLimitRuntime;
         std::unordered_map<int, TrackMeta> tracks;
-        std::unordered_map<int, int> trackToStreamMap;
-        int nextStreamId = 0; // next QUIC stream id to assign (client bidi: 0,4,8,...)
+        static const long CONTROL_STREAM = 0; // SUBSCRIBE sent here; data arrives on others
         inet::L3Address connectAddress;
         int receive_count = 0;
         unsigned int connectPort;
         bool sendingAllowed = false;
+
+        // Incoming data is a length-prefixed byte stream per QUIC stream; accumulate and frame.
+        // recv()s are serialized (one in flight) so the delivered stream id is always known:
+        // the QUIC "data available" size is cumulative, so issuing one recv per notification
+        // and matching deliveries by FIFO desyncs.
+        std::set<long> recvPending;                          // streams with undelivered data
+        long recvInFlight = -1;                              // stream of the outstanding recv
+        std::map<long, StreamReassembler> streamBuffers;     // per recv stream byte buffer
+        void startNextRecv(inet::QuicSocket* socket);
 
         // ---- metrics ----
         // Per completed object: end-to-end latency (creation->fully received) in seconds.
@@ -57,17 +67,6 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         // Per completed object: 1 if latency exceeded the track deadline, else 0.
         // The @statistic mean of this signal is the deadline miss ratio.
         omnetpp::simsignal_t deadlineMissSignal = -1;
-
-        // In-progress reassembly of a downstream object, keyed by (trackAlias, objectId).
-        struct SubObjReasm {
-            long totalBytes = 0;   // 64 (header) + payloadLength
-            long receivedBytes = 0;
-            omnetpp::simtime_t firstSliceTime = 0;
-            omnetpp::simtime_t creationTime = 0;
-            long payloadLength = 0;
-            long trackId = -1;
-        };
-        std::map<std::pair<std::string, long>, SubObjReasm> reasm;
 
         struct SubTrackStat {
             long received = 0;
@@ -85,6 +84,7 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         };
         std::unordered_map<std::string, SubTrackStat> subStats; // keyed by trackAlias
         SubTrackStat& trackStat(const std::string& trackAlias);
+        void recordObject(const MoqObjectFrame& f, omnetpp::simtime_t frameStartTime, omnetpp::simtime_t now);
     protected:
         inet::QuicSocket socket;
         virtual void handleMessageWhenUp(inet::cMessage *msg) override;

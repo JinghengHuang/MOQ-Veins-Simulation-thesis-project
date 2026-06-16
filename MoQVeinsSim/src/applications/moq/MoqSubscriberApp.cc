@@ -2,12 +2,9 @@
 
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
-#include "inet/common/packet/chunk/SliceChunk.h"
+#include "inet/common/packet/chunk/BytesChunk.h"
 #include "veins/modules/mobility/traci/TraCIMobility.h"
-#include "models/MoqObjectChunk_m.h"
-#include "models/MoqObjectAck_m.h"
-#include "models/MoqPublisherAnnounce_m.h"
-#include "models/MoqSubscriber_m.h"
+#include "models/MoqFraming.h"
 #include <algorithm>
 #include <cmath>
 
@@ -71,32 +68,18 @@ void MoqSubscriberApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             
             if (it != tracks.end()) {
                 track = &it->second;
-                auto subscribeRequest = new inet::Packet("SUBSCRIBE");
-
+                // Subscribe via a length-prefixed control byte frame on the control stream.
                 std::string vId = getParentModule()->getFullName();
-                inet::Ptr<MoqSubscriber> subHeader = inet::makeShared<MoqSubscriber>();
-                subHeader->setSubscriberId(vId.c_str());
-                subHeader->setTrackNamespace(track->trackNamespace.c_str());
-                subHeader->setTrackName(track->trackName.c_str());
-                subHeader->setSubscriberPriority(track->priority);
-                subHeader->setStartObjectId(0);
-                subHeader->setChunkLength(inet::B(64));
-                subscribeRequest->insertAtBack(subHeader);
-
-                // Each track subscribes on its own unique stream so the relay can map
-                // streams to tracks unambiguously and per-track data never shares a buffer.
-                auto iter = trackToStreamMap.find(tid);
-                if (iter == trackToStreamMap.end()) {
-                    trackToStreamMap[tid] = nextStreamId;
-                    nextStreamId += 4;
-                    iter = trackToStreamMap.find(tid);
-                }
-                if (iter != trackToStreamMap.end() && track != nullptr && subscribeRequest != nullptr) {
-                    int streamId = iter->second;
-                    // Use the 2-arg send: the 1-arg send(packet) internally calls
-                    // send(packet, 0) and would overwrite the stream ID back to 0.
-                    socket.send(subscribeRequest, streamId);
-                }
+                MoqControlFrame c;
+                c.type = CTRL_SUBSCRIBE;
+                c.subscriberId = vId;
+                c.trackNamespace = track->trackNamespace;
+                c.trackName = track->trackName;
+                c.subscriberPriority = track->priority;
+                c.startObjectId = 0;
+                auto subscribeRequest = new inet::Packet("SUBSCRIBE");
+                subscribeRequest->insertAtBack(inet::makeShared<inet::BytesChunk>(MoqFraming::encodeControl(c)));
+                socket.send(subscribeRequest, CONTROL_STREAM);
             }
 
         }
@@ -174,59 +157,63 @@ void MoqSubscriberApp::socketEstablished(inet::QuicSocket *socket) {
 }
 
 void MoqSubscriberApp::socketDataAvailable(inet::QuicSocket* socket, inet::QuicDataInfo *dataInfo) {
-    socket->recv(static_cast<int64_t>(dataInfo->getAvaliableDataSize()), dataInfo->getStreamID());
+    long s = dataInfo->getStreamID();
+    if (recvInFlight == s) return; // the outstanding recv will drain whatever is available
+    recvPending.insert(s);
+    if (recvInFlight < 0) startNextRecv(socket);
+}
+
+// Serialize receives: one recv outstanding at a time, draining a whole stream per recv, so
+// the delivered packet (which carries no stream tag) always maps to recvInFlight.
+void MoqSubscriberApp::startNextRecv(inet::QuicSocket* socket) {
+    if (recvPending.empty()) { recvInFlight = -1; return; }
+    long s = *recvPending.begin();
+    recvPending.erase(recvPending.begin());
+    recvInFlight = s;
+    socket->recv((int64_t) 1 << 40, s); // large size => drain all available for this stream
 }
 
 void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *packet) {
-    auto frontChunk = packet->peekAtFront<inet::Chunk>();
-    EV_DEBUG << "Received packet: " << packet->getFullName() << " With header: " << frontChunk.get()->getClassName() << std::endl;
+    long streamId = recvInFlight;
+    recvInFlight = -1;
 
-    // A large object is delivered as a sequence of SliceChunk fragments; a small object
-    // arrives as a single complete MoqObjectChunk. Resolve the underlying object and how
-    // many bytes this delivery carries, then reassemble per (trackAlias, objectId).
-    const MoqObjectChunk *chunk = dynamic_cast<const MoqObjectChunk *>(frontChunk.get());
-    long sliceBytes = 0;
-    if (chunk != nullptr) {
-        sliceBytes = inet::B(chunk->getChunkLength()).get();
+    auto bytes = packet->peekDataAsBytes();
+    const auto& vec = bytes->getBytes();
+    omnetpp::simtime_t now = omnetpp::simTime();
+    StreamReassembler& rb = streamBuffers[streamId];
+    if (rb.data.empty()) rb.frameStartTime = now;
+    rb.data.insert(rb.data.end(), vec.begin(), vec.end());
+
+    if (streamId == CONTROL_STREAM) {
+        // Control (e.g. SUBSCRIBE_OK) — parse and ignore; the subscriber needs no ack.
+        MoqControlFrame c;
+        size_t consumed;
+        while (MoqFraming::tryParseControl(rb.data, c, consumed)) {
+            rb.data.erase(rb.data.begin(), rb.data.begin() + consumed);
+        }
     } else {
-        const auto *sliceChunk = dynamic_cast<const inet::SliceChunk *>(frontChunk.get());
-        if (sliceChunk != nullptr) {
-            chunk = dynamic_cast<const MoqObjectChunk *>(sliceChunk->getChunk().get());
-            sliceBytes = inet::B(sliceChunk->getLength()).get();
+        // Data stream: frame length-delimited objects and record metrics for each.
+        MoqObjectFrame f;
+        size_t consumed;
+        while (MoqFraming::tryParse(rb.data, f, consumed)) {
+            recordObject(f, rb.frameStartTime, now);
+            rb.data.erase(rb.data.begin(), rb.data.begin() + consumed);
+            rb.frameStartTime = now; // next object's first byte arrived now
         }
     }
-    if (chunk == nullptr) {
-        delete packet;
-        return;
-    }
+    delete packet;
+    startNextRecv(socket);
+}
 
-    std::string trackAlias = chunk->getTrackAlias();
-    long objId = chunk->getObjectId();
-    auto key = std::make_pair(trackAlias, objId);
-    SubObjReasm& st = reasm[key];
-    if (st.totalBytes == 0) {
-        st.totalBytes = 64 + chunk->getPayloadLength();
-        st.firstSliceTime = omnetpp::simTime();
-        st.creationTime = chunk->getCreationTime();
-        st.payloadLength = chunk->getPayloadLength();
-        st.trackId = chunk->getTrackId();
-    }
-    st.receivedBytes += sliceBytes;
-
-    if (st.receivedBytes < st.totalBytes) {
-        // Object not yet complete — wait for more fragments.
-        delete packet;
-        return;
-    }
-
-    // ---- object fully received: record metrics ----
-    omnetpp::simtime_t now = omnetpp::simTime();
-    double latency = (now - st.creationTime).dbl();
-    double completion = (now - st.firstSliceTime).dbl();
+// Record per-object metrics for a fully-received object frame.
+void MoqSubscriberApp::recordObject(const MoqObjectFrame& f, omnetpp::simtime_t frameStartTime, omnetpp::simtime_t now)
+{
+    double latency = (now - f.creationTime).dbl();
+    double completion = (now - frameStartTime).dbl();
     emit(endToEndLatencySignal, latency);
     emit(objectCompletionTimeSignal, completion);
 
-    SubTrackStat& ts = trackStat(trackAlias);
+    SubTrackStat& ts = trackStat(f.trackAlias);
     ts.latencySum += latency;
     if (latency > ts.latencyMax) ts.latencyMax = latency;
     ts.completionSum += completion;
@@ -245,40 +232,20 @@ void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet 
     if (miss) ts.deadlineMisses++;
 
     ts.received++;
-    ts.bytes += st.payloadLength;
-    if (objId > ts.highestObjId) ts.highestObjId = objId;
+    ts.bytes += f.payloadLength;
+    if (f.objectId > ts.highestObjId) ts.highestObjId = f.objectId;
     if (ts.firstRecv < SIMTIME_ZERO) ts.firstRecv = now;
     ts.lastRecv = now;
 
     receive_count += 1;
-    long completedTrackId = st.trackId;
-    reasm.erase(key);
-
-    // Acknowledge the fully-received object back to the relay so it forwards the
-    // next object on this track's stream. Sent on the same stream we subscribed on.
-    auto trackEntry = tracks.find(completedTrackId);
-    auto streamEntry = trackToStreamMap.find(completedTrackId);
-    if (trackEntry != tracks.end() && streamEntry != trackToStreamMap.end()) {
-        auto ackPacket = new inet::Packet("OBJECT_ACK");
-        inet::Ptr<MoqObjectAck> ack = inet::makeShared<MoqObjectAck>();
-        ack->setSubscriberId(getParentModule()->getFullName());
-        ack->setTrackNamespace(trackEntry->second.trackNamespace.c_str());
-        ack->setTrackName(trackEntry->second.trackName.c_str());
-        ack->setObjectId(objId);
-        ack->setChunkLength(inet::B(64));
-        ackPacket->insertAtBack(ack);
-        socket->send(ackPacket, streamEntry->second);
-    }
-
     EV_INFO << "Track object completed"
-            << " | trackAlias=" << trackAlias
-            << " | objectId=" << objId
-            << " | payloadLength=" << st.payloadLength
+            << " | trackAlias=" << f.trackAlias
+            << " | objectId=" << f.objectId
+            << " | payloadLength=" << f.payloadLength
             << " | e2eLatency=" << latency << "s"
             << " | completionTime=" << completion << "s"
             << " | deadlineMiss=" << miss
             << std::endl;
-    delete packet;
 }
 
 void MoqSubscriberApp::socketClosed(inet::QuicSocket *socket) {
