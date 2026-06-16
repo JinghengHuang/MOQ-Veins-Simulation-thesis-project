@@ -15,6 +15,8 @@ Date: 5/15/2026
 #include <omnetpp.h>
 #include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
+#include "inet/transportlayer/contract/tcp/TcpSocket.h"
+#include "inet/transportlayer/contract/udp/UdpSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/networklayer/common/L3Address.h"
 #include "models/TrackInfo.h"
@@ -22,7 +24,10 @@ Date: 5/15/2026
 
 
 namespace moqveinssim {
-class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::ICallback {
+class MoqSubscriberApp : public inet::ApplicationBase,
+                         public inet::QuicSocket::ICallback,
+                         public inet::TcpSocket::ICallback,
+                         public inet::UdpSocket::ICallback {
     
     public:
         MoqSubscriberApp();
@@ -47,6 +52,17 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         int receive_count = 0;
         unsigned int connectPort;
         bool sendingAllowed = false;
+
+        // ---- transport selection (additive; QUIC path unchanged) ----
+        MoqProtocol proto = PROTO_QUIC;
+        int udpFragmentSize = 1200;
+        inet::TcpSocket tcpSocket;        // used when proto == PROTO_TCP
+        inet::UdpSocket udpSocket;        // used when proto == PROTO_UDP
+        std::vector<uint8_t> tcpRecvBuf;  // TCP: single ordered byte stream, enveloped frames
+        omnetpp::simtime_t tcpFrameStart = -1; // arrival of the current object's first byte (TCP)
+        // UDP object reassembly, keyed by (trackAlias, objectId).
+        std::map<std::pair<std::string, long>, MoqFraming::UdpObjectReassembler> udpReasm;
+        void sendControlFrame(const MoqControlFrame& c);
 
         // Incoming data is a length-prefixed byte stream per QUIC stream; accumulate and frame.
         // recv()s are serialized (one in flight) so the delivered stream id is always known:
@@ -103,6 +119,22 @@ class MoqSubscriberApp : public inet::ApplicationBase, public inet::QuicSocket::
         virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
         virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
         virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
+
+        // ---- TcpSocket::ICallback (used when proto == PROTO_TCP) ----
+        virtual void socketDataArrived(inet::TcpSocket *socket, inet::Packet *packet, bool urgent) override;
+        virtual void socketAvailable(inet::TcpSocket *socket, inet::TcpAvailableInfo *info) override { } // client: never listens
+        virtual void socketEstablished(inet::TcpSocket *socket) override;
+        virtual void socketPeerClosed(inet::TcpSocket *socket) override { }
+        virtual void socketClosed(inet::TcpSocket *socket) override { }
+        virtual void socketFailure(inet::TcpSocket *socket, int code) override { }
+        virtual void socketStatusArrived(inet::TcpSocket *socket, inet::TcpStatusInfo *status) override { }
+        virtual void socketDeleted(inet::TcpSocket *socket) override { }
+
+        // ---- UdpSocket::ICallback (used when proto == PROTO_UDP) ----
+        virtual void socketDataArrived(inet::UdpSocket *socket, inet::Packet *packet) override;
+        virtual void socketErrorArrived(inet::UdpSocket *socket, inet::Indication *indication) override { delete indication; }
+        virtual void socketClosed(inet::UdpSocket *socket) override { }
+
         virtual void sendTrackSubscribeData();
         virtual void finish() override;
         void handleTimeout(omnetpp::cMessage *msg);

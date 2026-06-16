@@ -40,11 +40,27 @@ void MoqSubscriberApp::handleTimeout(omnetpp::cMessage *msg)
     switch (msg->getKind()) {
         case TIMER_CONNECT:
             EV_INFO << "connect - address: " << connectAddress << std::endl;
-            //socket.connect(connectAddress, connectPort, 0, 0, 0);
-            socket.connect(connectAddress, connectPort);
+            switch (proto) {
+                case PROTO_QUIC:
+                    //socket.connect(connectAddress, connectPort, 0, 0, 0);
+                    socket.connect(connectAddress, connectPort);
+                    break;
+                case PROTO_TCP:
+                    tcpSocket.connect(connectAddress, connectPort);
+                    break;
+                case PROTO_UDP:
+                    // UDP is connectionless: no establishment callback, so subscribe now.
+                    sendingAllowed = true;
+                    sendTrackSubscribeData();
+                    break;
+            }
             break;
         case TIMER_LIMIT_RUNTIME:
-            socket.close();
+            switch (proto) {
+                case PROTO_QUIC: socket.close(); break;
+                case PROTO_TCP:  tcpSocket.close(); break;
+                case PROTO_UDP:  udpSocket.close(); break;
+            }
             finish();
             break;
         default:
@@ -68,24 +84,27 @@ void MoqSubscriberApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             
             if (it != tracks.end()) {
                 track = &it->second;
-                // Subscribe via a length-prefixed control byte frame on the control stream.
+                // Subscribe via a length-prefixed control byte frame.
                 std::string vId = getParentModule()->getFullName();
                 MoqControlFrame c;
                 c.type = CTRL_SUBSCRIBE;
                 c.subscriberId = vId;
                 c.trackNamespace = track->trackNamespace;
                 c.trackName = track->trackName;
+                c.trackAlias = track->trackAlias;
                 c.subscriberPriority = track->priority;
                 c.startObjectId = 0;
-                auto subscribeRequest = new inet::Packet("SUBSCRIBE");
-                subscribeRequest->insertAtBack(inet::makeShared<inet::BytesChunk>(MoqFraming::encodeControl(c)));
-                socket.send(subscribeRequest, CONTROL_STREAM);
+                sendControlFrame(c);
             }
 
         }
-    } else if (msg->arrivedOn("socketIn")) { // from QUIC
+    } else if (msg->arrivedOn("socketIn")) { // from the transport layer
         // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
-        socket.processMessage(msg);
+        switch (proto) {
+            case PROTO_QUIC: socket.processMessage(msg); break;
+            case PROTO_TCP:  tcpSocket.processMessage(msg); break;
+            case PROTO_UDP:  udpSocket.processMessage(msg); break;
+        }
     } else { // something really strange...
         throw omnetpp::cRuntimeError("Invalid message: %d", (int) msg->getKind());
     }
@@ -101,14 +120,35 @@ void MoqSubscriberApp::handleStartOperation(inet::LifecycleOperation *operation)
     e2eJitterSignal           = registerSignal("e2eJitter");
     deadlineMissSignal        = registerSignal("deadlineMiss");
 
+    std::string protoStr = par("protocol").stdstringValue();
+    if (protoStr == "tcp") proto = PROTO_TCP;
+    else if (protoStr == "udp") proto = PROTO_UDP;
+    else proto = PROTO_QUIC;
+    udpFragmentSize = (int) par("udpFragmentSize").intValue();
+
     connectPort = par("connectPort");
     connectAddress = inet::L3AddressResolver().resolve(par("connectAddress"));
-    socket.setOutputGate(gate("socketOut"));
-    socket.setCallback(this);
 
     inet::L3Address localAddress = inet::L3AddressResolver().resolve(par("localAddress"));
     int localPort = par("localPort");
-    socket.bind(localAddress, localPort);
+
+    switch (proto) {
+        case PROTO_QUIC:
+            socket.setOutputGate(gate("socketOut"));
+            socket.setCallback(this);
+            socket.bind(localAddress, localPort);
+            break;
+        case PROTO_TCP:
+            tcpSocket.setOutputGate(gate("socketOut"));
+            tcpSocket.setCallback(this);
+            tcpSocket.bind(localAddress, localPort);
+            break;
+        case PROTO_UDP:
+            udpSocket.setOutputGate(gate("socketOut"));
+            udpSocket.setCallback(this);
+            udpSocket.bind(localAddress, localPort);
+            break;
+    }
 
     std::string vId = getParentModule()->getFullName();
     const auto* arr = dynamic_cast<const omnetpp::cValueArray*>(par("tracks").objectValue());
@@ -203,6 +243,83 @@ void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet 
     }
     delete packet;
     startNextRecv(socket);
+}
+
+// Send a control frame (SUBSCRIBE). QUIC uses the control stream; TCP prepends an envelope
+// class byte; UDP sends self-describing datagram(s) to the relay.
+void MoqSubscriberApp::sendControlFrame(const MoqControlFrame& c) {
+    auto frame = MoqFraming::encodeControl(c);
+    switch (proto) {
+        case PROTO_QUIC: {
+            auto packet = new inet::Packet("SUBSCRIBE");
+            packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frame));
+            socket.send(packet, CONTROL_STREAM);
+            break;
+        }
+        case PROTO_TCP: {
+            auto packet = new inet::Packet("SUBSCRIBE");
+            packet->insertAtBack(inet::makeShared<inet::BytesChunk>(
+                MoqFraming::encodeEnvelope(MoqFraming::MSG_CONTROL, frame)));
+            tcpSocket.send(packet);
+            break;
+        }
+        case PROTO_UDP: {
+            auto frags = MoqFraming::fragmentFrame(MoqFraming::MSG_CONTROL, c.trackAlias,
+                                                   -1 /*control objectId*/, frame, udpFragmentSize);
+            for (auto& d : frags) {
+                auto packet = new inet::Packet("SUBSCRIBE");
+                packet->insertAtBack(inet::makeShared<inet::BytesChunk>(d));
+                udpSocket.sendTo(packet, connectAddress, connectPort);
+            }
+            break;
+        }
+    }
+}
+
+// ---- TCP callbacks ----
+void MoqSubscriberApp::socketEstablished(inet::TcpSocket *) {
+    EV_INFO << "TCP socketEstablished" << std::endl;
+    sendingAllowed = true;
+    sendTrackSubscribeData();
+}
+
+void MoqSubscriberApp::socketDataArrived(inet::TcpSocket *, inet::Packet *packet, bool) {
+    auto bytes = packet->peekDataAsBytes();
+    const auto& vec = bytes->getBytes();
+    omnetpp::simtime_t now = omnetpp::simTime();
+    if (tcpRecvBuf.empty()) tcpFrameStart = now;
+    tcpRecvBuf.insert(tcpRecvBuf.end(), vec.begin(), vec.end());
+
+    MoqControlFrame c;
+    MoqObjectFrame f;
+    size_t consumed;
+    int kind;
+    while ((kind = MoqFraming::tryParseEnvelope(tcpRecvBuf, c, f, consumed)) != 0) {
+        if (kind == 2) recordObject(f, tcpFrameStart, now);
+        tcpRecvBuf.erase(tcpRecvBuf.begin(), tcpRecvBuf.begin() + consumed);
+        tcpFrameStart = now; // next frame's first byte considered arriving now
+    }
+    delete packet;
+}
+
+// ---- UDP callbacks ----
+void MoqSubscriberApp::socketDataArrived(inet::UdpSocket *, inet::Packet *packet) {
+    auto bytes = packet->peekDataAsBytes();
+    const auto& vec = bytes->getBytes();
+    omnetpp::simtime_t now = omnetpp::simTime();
+    MoqFraming::MoqUdpFragment frag;
+    if (MoqFraming::parseUdpFragment(vec, frag) && frag.msgClass == MoqFraming::MSG_OBJECT) {
+        auto key = std::make_pair(frag.trackAlias, (long) frag.objectId);
+        auto& r = udpReasm[key];
+        if (r.add(frag, now)) {
+            MoqObjectFrame f;
+            size_t consumed;
+            if (MoqFraming::tryParse(r.data, f, consumed))
+                recordObject(f, r.firstByteTime, now);
+            udpReasm.erase(key);
+        }
+    }
+    delete packet;
 }
 
 // Record per-object metrics for a fully-received object frame.
