@@ -38,11 +38,28 @@ void MoqPublisherApp::handleTimeout(omnetpp::cMessage *msg)
     switch (msg->getKind()) {
         case TIMER_CONNECT:
             EV_INFO << "connect - address: " << connectAddress << std::endl;
-            //socket.connect(connectAddress, connectPort, 0, 0, 0);
-            socket.connect(connectAddress, connectPort);
+            switch (proto) {
+                case PROTO_QUIC:
+                    //socket.connect(connectAddress, connectPort, 0, 0, 0);
+                    socket.connect(connectAddress, connectPort);
+                    break;
+                case PROTO_TCP:
+                    tcpSocket.connect(connectAddress, connectPort);
+                    break;
+                case PROTO_UDP:
+                    // UDP is connectionless: there is no establishment callback, so begin
+                    // announcing as soon as the (would-be) connect time elapses.
+                    sendingAllowed = true;
+                    sendTrackAnnouncementData();
+                    break;
+            }
             break;
         case TIMER_LIMIT_RUNTIME:
-            socket.close();
+            switch (proto) {
+                case PROTO_QUIC: socket.close(); break;
+                case PROTO_TCP:  tcpSocket.close(); break;
+                case PROTO_UDP:  udpSocket.close(); break;
+            }
             finish();
             break;
         default:
@@ -65,17 +82,15 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             EV_DEBUG << "NAME: " << name << std::endl;
             long tid = std::stoi(name);
             auto it = tracks.find(tid);
-            inet::Packet *packet = nullptr;
             TrackMeta* track = nullptr;
-            
+
             EV_DEBUG << "ID: " << id << std::endl;
             switch (id)
             {
             case PUB_ANNOUNCE:
                 if (it != tracks.end()) {
                     track = &it->second;
-                    // Announce as a length-prefixed control byte frame on the control stream.
-                    packet = new inet::Packet("ANNOUNCE");
+                    // Announce as a length-prefixed control byte frame.
                     MoqControlFrame c;
                     c.type = CTRL_ANNOUNCE;
                     c.trackId = track->trackId;
@@ -86,17 +101,14 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     c.trackNamespace = track->trackNamespace;
                     c.trackName = track->trackName;
                     c.trackAlias = track->trackAlias;
-                    packet->insertAtBack(inet::makeShared<inet::BytesChunk>(MoqFraming::encodeControl(c)));
+                    sendControlFrame(c);
                 }
                 break;
             case SUB_SUCCESS:
                 if (it != tracks.end()) {
                     track = &it->second;
-                    // Send the object as a MoQ-style length-prefixed byte frame. Encoding
-                    // the whole object (header + payload) as one BytesChunk lets consecutive
-                    // objects coalesce on the stream instead of forming a SequenceChunk, and
-                    // makes objects self-delimiting (the receiver frames by length).
-                    packet = new inet::Packet("TRACK_OBJ");
+                    // Send the object as a MoQ-style length-prefixed byte frame (header +
+                    // payload), self-delimiting so the receiver frames by length.
                     MoqObjectFrame f;
                     f.trackId = track->trackId;
                     f.trackAlias = track->trackAlias;
@@ -106,9 +118,17 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     f.payloadLength = track->packetSize;
                     f.creationTime = omnetpp::simTime();
                     track->nextObjectId++;
-                    auto frameBytes = MoqFraming::encode(f);
-                    packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frameBytes));
+                    sendObjectFrame(f, tid);
                     EV_INFO << "Send track object data: " << track->trackAlias.c_str() << std::endl;
+
+                    // Record one data object offered to the network for this track.
+                    PubTrackStat& ps = pubStats[track->trackId];
+                    ps.objectsSent++;
+                    ps.bytesSent += track->packetSize;
+                    if (ps.firstSendTime < SIMTIME_ZERO) ps.firstSendTime = omnetpp::simTime();
+                    ps.lastSendTime = omnetpp::simTime();
+                    emit(objectSentSignal, (long) track->packetSize);
+
                     // Arrange sending another packet of the same event
                     sendTrackData(tid);
                 }
@@ -118,40 +138,14 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 EV_DEBUG << "Getting sub error: " << msg->getKind() << std::endl;
                 break;
             }
-            
-            // Stream mapping: control (ANNOUNCE) goes on the control stream; object data
-            // goes on a per-track DATA stream (client-bidi 4,8,...). Keeping data streams
-            // homogeneous (only byte frames) is what makes the framing safe.
-            if (track != nullptr && packet != nullptr) {
-                long streamId;
-                if (id == PUB_ANNOUNCE) {
-                    streamId = CONTROL_STREAM;
-                } else { // SUB_SUCCESS data
-                    auto iter = trackToStreamMap.find(tid);
-                    if (iter == trackToStreamMap.end()) {
-                        trackToStreamMap[tid] = nextStreamId;
-                        nextStreamId += 4;
-                        iter = trackToStreamMap.find(tid);
-                    }
-                    streamId = iter->second;
-                }
-                // Use the 2-arg send: the 1-arg send(packet) resets the stream id to 0.
-                socket.send(packet, streamId);
-                if (id == SUB_SUCCESS) {
-                    // Record one data object offered to the network for this track.
-                    PubTrackStat& ps = pubStats[track->trackId];
-                    ps.objectsSent++;
-                    ps.bytesSent += track->packetSize;
-                    if (ps.firstSendTime < SIMTIME_ZERO) ps.firstSendTime = omnetpp::simTime();
-                    ps.lastSendTime = omnetpp::simTime();
-                    emit(objectSentSignal, (long) track->packetSize);
-                }
-                EV_INFO << "sendData - track " << track->trackId << " - name " << track->trackName << " - size " << track->packetSize << " B" << " - streamId  " << streamId << std::endl;
-            }
         }
-    } else if (msg->arrivedOn("socketIn")) { // from QUIC
+    } else if (msg->arrivedOn("socketIn")) { // from the transport layer
         // TODO: Add and handle events: case QUIC_I_SENDQUEUE_DRAINING and QUIC_I_SENDQUEUE_FULL
-        socket.processMessage(msg);
+        switch (proto) {
+            case PROTO_QUIC: socket.processMessage(msg); break;
+            case PROTO_TCP:  tcpSocket.processMessage(msg); break;
+            case PROTO_UDP:  udpSocket.processMessage(msg); break;
+        }
         //delete msg;
     } else { // something really strange...
         throw omnetpp::cRuntimeError("Invalid message: %d", (int) msg->getKind());
@@ -165,15 +159,37 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
 
     objectSentSignal = registerSignal("objectSent");
 
+    // Select the underlying transport. QUIC keeps its original setup; TCP/UDP are additive.
+    std::string protoStr = par("protocol").stdstringValue();
+    if (protoStr == "tcp") proto = PROTO_TCP;
+    else if (protoStr == "udp") proto = PROTO_UDP;
+    else proto = PROTO_QUIC;
+    udpFragmentSize = (int) par("udpFragmentSize").intValue();
+
     connectPort = par("connectPort");
     connectAddress = inet::L3AddressResolver().resolve(par("connectAddress"));
-    socket.setOutputGate(gate("socketOut"));
-    socket.setCallback(this);
 
     inet::L3Address localAddress = inet::L3AddressResolver().resolve(par("localAddress"));
     int localPort = par("localPort");
-    socket.bind(localAddress, localPort);
-    socket.listen();
+
+    switch (proto) {
+        case PROTO_QUIC:
+            socket.setOutputGate(gate("socketOut"));
+            socket.setCallback(this);
+            socket.bind(localAddress, localPort);
+            socket.listen();
+            break;
+        case PROTO_TCP:
+            tcpSocket.setOutputGate(gate("socketOut"));
+            tcpSocket.setCallback(this);
+            tcpSocket.bind(localAddress, localPort);
+            break;
+        case PROTO_UDP:
+            udpSocket.setOutputGate(gate("socketOut"));
+            udpSocket.setCallback(this);
+            udpSocket.bind(localAddress, localPort);
+            break;
+    }
 
     const auto* arr = dynamic_cast<const omnetpp::cValueArray*>(par("tracks").objectValue());
     omnetpp::cModule* host = getParentModule();
@@ -245,20 +261,136 @@ void MoqPublisherApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet *
         MoqControlFrame c;
         size_t consumed;
         while (MoqFraming::tryParseControl(controlBuf.data, c, consumed)) {
-            if (c.type == CTRL_SUBSCRIBE_OK) {
-                std::string trackAlias = c.trackNamespace + "/" + c.trackName;
-                for (auto& entry : tracks) {
-                    TrackMeta& track = entry.second;
-                    if (track.trackAlias == trackAlias) {
-                        cancelEvent(track.timer);
-                        track.timer->setKind(SUB_SUCCESS);
-                        scheduleAt(omnetpp::simTime(), track.timer);
-                        EV_INFO << "SUBSCRIBE_OK for track: " << trackAlias << " - starting data transmission" << std::endl;
-                        break;
-                    }
-                }
-            }
+            handleControlFrame(c);
             controlBuf.data.erase(controlBuf.data.begin(), controlBuf.data.begin() + consumed);
+        }
+    }
+    delete packet;
+}
+
+// React to a control frame from the relay (SUBSCRIBE_OK starts this track's transmission).
+void MoqPublisherApp::handleControlFrame(const MoqControlFrame& c) {
+    if (c.type != CTRL_SUBSCRIBE_OK) return;
+    std::string trackAlias = c.trackNamespace + "/" + c.trackName;
+    for (auto& entry : tracks) {
+        TrackMeta& track = entry.second;
+        if (track.trackAlias == trackAlias) {
+            cancelEvent(track.timer);
+            track.timer->setKind(SUB_SUCCESS);
+            scheduleAt(omnetpp::simTime(), track.timer);
+            EV_INFO << "SUBSCRIBE_OK for track: " << trackAlias << " - starting data transmission" << std::endl;
+            break;
+        }
+    }
+}
+
+// ---- protocol-agnostic senders ----
+
+// Send a control frame. QUIC uses the control stream; TCP prepends an envelope class byte on
+// the single ordered stream; UDP sends it as (one or more) self-describing datagrams.
+void MoqPublisherApp::sendControlFrame(const MoqControlFrame& c) {
+    auto frame = MoqFraming::encodeControl(c);
+    switch (proto) {
+        case PROTO_QUIC: {
+            auto packet = new inet::Packet("ANNOUNCE");
+            packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frame));
+            socket.send(packet, CONTROL_STREAM);
+            break;
+        }
+        case PROTO_TCP: {
+            auto packet = new inet::Packet("ANNOUNCE");
+            packet->insertAtBack(inet::makeShared<inet::BytesChunk>(
+                MoqFraming::encodeEnvelope(MoqFraming::MSG_CONTROL, frame)));
+            tcpSocket.send(packet);
+            break;
+        }
+        case PROTO_UDP: {
+            auto frags = MoqFraming::fragmentFrame(MoqFraming::MSG_CONTROL, c.trackAlias,
+                                                   -1 /*control objectId*/, frame, udpFragmentSize);
+            for (auto& d : frags) {
+                auto packet = new inet::Packet("ANNOUNCE");
+                packet->insertAtBack(inet::makeShared<inet::BytesChunk>(d));
+                udpSocket.sendTo(packet, connectAddress, connectPort);
+            }
+            break;
+        }
+    }
+}
+
+// Send a data object. QUIC uses a per-track data stream (client-bidi 4,8,...); TCP envelopes
+// it on the single stream; UDP fragments it into bounded datagrams.
+void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
+    auto frame = MoqFraming::encode(f);
+    switch (proto) {
+        case PROTO_QUIC: {
+            auto packet = new inet::Packet("TRACK_OBJ");
+            packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frame));
+            auto iter = trackToStreamMap.find(tid);
+            if (iter == trackToStreamMap.end()) {
+                trackToStreamMap[tid] = nextStreamId;
+                nextStreamId += 4;
+                iter = trackToStreamMap.find(tid);
+            }
+            // Use the 2-arg send: the 1-arg send(packet) resets the stream id to 0.
+            socket.send(packet, iter->second);
+            break;
+        }
+        case PROTO_TCP: {
+            auto packet = new inet::Packet("TRACK_OBJ");
+            packet->insertAtBack(inet::makeShared<inet::BytesChunk>(
+                MoqFraming::encodeEnvelope(MoqFraming::MSG_OBJECT, frame)));
+            tcpSocket.send(packet);
+            break;
+        }
+        case PROTO_UDP: {
+            auto frags = MoqFraming::fragmentFrame(MoqFraming::MSG_OBJECT, f.trackAlias,
+                                                   f.objectId, frame, udpFragmentSize);
+            for (auto& d : frags) {
+                auto packet = new inet::Packet("TRACK_OBJ");
+                packet->insertAtBack(inet::makeShared<inet::BytesChunk>(d));
+                udpSocket.sendTo(packet, connectAddress, connectPort);
+            }
+            break;
+        }
+    }
+}
+
+// ---- TCP callbacks ----
+void MoqPublisherApp::socketEstablished(inet::TcpSocket *) {
+    EV_INFO << "TCP socketEstablished" << std::endl;
+    sendingAllowed = true;
+    sendTrackAnnouncementData();
+}
+
+void MoqPublisherApp::socketDataArrived(inet::TcpSocket *, inet::Packet *packet, bool) {
+    auto bytes = packet->peekDataAsBytes();
+    const auto& vec = bytes->getBytes();
+    tcpRecvBuf.insert(tcpRecvBuf.end(), vec.begin(), vec.end());
+
+    MoqControlFrame c;
+    MoqObjectFrame obj;
+    size_t consumed;
+    int kind;
+    while ((kind = MoqFraming::tryParseEnvelope(tcpRecvBuf, c, obj, consumed)) != 0) {
+        if (kind == 1) handleControlFrame(c); // publisher only expects control (SUBSCRIBE_OK)
+        tcpRecvBuf.erase(tcpRecvBuf.begin(), tcpRecvBuf.begin() + consumed);
+    }
+    delete packet;
+}
+
+// ---- UDP callbacks ----
+void MoqPublisherApp::socketDataArrived(inet::UdpSocket *, inet::Packet *packet) {
+    auto bytes = packet->peekDataAsBytes();
+    const auto& vec = bytes->getBytes();
+    MoqFraming::MoqUdpFragment frag;
+    if (MoqFraming::parseUdpFragment(vec, frag) && frag.msgClass == MoqFraming::MSG_CONTROL) {
+        auto key = std::make_pair(frag.trackAlias, (long) frag.objectId);
+        auto& r = udpReasm[key];
+        if (r.add(frag, omnetpp::simTime())) {
+            MoqControlFrame c;
+            size_t consumed;
+            if (MoqFraming::tryParseControl(r.data, c, consumed)) handleControlFrame(c);
+            udpReasm.erase(key);
         }
     }
     delete packet;
