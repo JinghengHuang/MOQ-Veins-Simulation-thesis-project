@@ -9,6 +9,9 @@ date: 5/15/2026
 #include "utils/StringUtils.h"
 #include <regex.h>
 #include "inet/networklayer/common/L3AddressResolver.h"
+#include "inet/networklayer/common/L3AddressTag_m.h"
+#include "inet/transportlayer/common/L4PortTag_m.h"
+#include "inet/transportlayer/contract/tcp/TcpCommand_m.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/common/packet/chunk/BytesChunk.h"
 #include "models/MoqFraming.h"
@@ -35,6 +38,10 @@ namespace moqveinssim
         publisherSocketsByTrackKey.clear();
         subscriberSockets.clear();
         socketMap.deleteSockets();
+        publisherTcpSockets.clear();
+        publisherTcpSocketsByTrackKey.clear();
+        subscriberTcpSockets.clear();
+        tcpSocketMap.deleteSockets();
     }
 
     void MoqRelayApp::handleStartOperation(inet::LifecycleOperation *operation)
@@ -46,13 +53,34 @@ namespace moqveinssim
         objectForwardedSignal = registerSignal("objectForwarded");
         emit(relayQueueDepthSignal, (long) 0); // seed so timeavg/max aren't nan if never blocked
 
-        socket.setOutputGate(gate("socketOut"));
-        socket.setCallback(this);
+        std::string protoStr = par("protocol").stdstringValue();
+        if (protoStr == "tcp") proto = PROTO_TCP;
+        else if (protoStr == "udp") proto = PROTO_UDP;
+        else proto = PROTO_QUIC;
+        udpFragmentSize = (int) par("udpFragmentSize").intValue();
 
         inet::L3Address localAddress = inet::L3AddressResolver().resolve(par("localAddress"));
         int localPort = par("localPort");
-        socket.bind(localAddress, localPort);
-        socket.listen();
+
+        switch (proto) {
+            case PROTO_QUIC:
+                socket.setOutputGate(gate("socketOut"));
+                socket.setCallback(this);
+                socket.bind(localAddress, localPort);
+                socket.listen();
+                break;
+            case PROTO_TCP:
+                tcpSocket.setOutputGate(gate("socketOut"));
+                tcpSocket.setCallback(this);
+                tcpSocket.bind(localAddress, localPort);
+                tcpSocket.listen();
+                break;
+            case PROTO_UDP:
+                udpSocket.setOutputGate(gate("socketOut"));
+                udpSocket.setCallback(this);
+                udpSocket.bind(localAddress, localPort);
+                break;
+        }
     }
 
     void MoqRelayApp::handleStopOperation(inet::LifecycleOperation *operation)
@@ -203,6 +231,201 @@ namespace moqveinssim
         }
     }
 
+    // ===================== TCP server path (proto == PROTO_TCP) =====================
+
+    void MoqRelayApp::socketAvailable(inet::TcpSocket *listenSocket, inet::TcpAvailableInfo *info)
+    {
+        auto *newSocket = new inet::TcpSocket(info);
+        newSocket->setOutputGate(gate("socketOut"));
+        newSocket->setCallback(this);
+        tcpSocketMap.addSocket(newSocket);
+        listenSocket->accept(info->getNewSocketId());
+        EV_INFO << "Accepted TCP connection, socketId=" << newSocket->getSocketId() << std::endl;
+    }
+
+    void MoqRelayApp::socketDataArrived(inet::TcpSocket *peerSocket, inet::Packet *packet, bool)
+    {
+        int sid = peerSocket->getSocketId();
+        auto& buf = tcpRecvBuf[sid];
+        omnetpp::simtime_t now = omnetpp::simTime();
+        if (buf.empty()) tcpFrameStart[sid] = now;
+        auto bytes = packet->peekDataAsBytes();
+        const auto& vec = bytes->getBytes();
+        buf.insert(buf.end(), vec.begin(), vec.end());
+
+        MoqControlFrame c;
+        MoqObjectFrame f;
+        size_t consumed;
+        int kind;
+        while ((kind = MoqFraming::tryParseEnvelope(buf, c, f, consumed)) != 0) {
+            if (kind == 1) {
+                handleControlFrameTcp(peerSocket, c);
+            } else if (kind == 2) {
+                // Inner length-prefixed frame (strip the 1-byte envelope class) for forwarding.
+                std::vector<uint8_t> frameBytes(buf.begin() + 1, buf.begin() + consumed);
+                onObjectFrame(f, frameBytes, tcpFrameStart[sid]);
+            }
+            buf.erase(buf.begin(), buf.begin() + consumed);
+            tcpFrameStart[sid] = now;
+        }
+        delete packet;
+    }
+
+    // Control handling for TCP (mirrors the QUIC handler but tracks TcpSocket peers).
+    void MoqRelayApp::handleControlFrameTcp(inet::TcpSocket *peerSocket, const MoqControlFrame &c)
+    {
+        if (c.type == CTRL_ANNOUNCE) {
+            std::string pid = std::to_string(c.publisherId);
+            TrackKey tKey{c.trackNamespace, c.trackName};
+            TrackMeta tm;
+            tm.publisherId = c.publisherId;
+            tm.trackId = c.trackId;
+            tm.trackNamespace = c.trackNamespace;
+            tm.trackName = c.trackName;
+            tm.trackAlias = c.trackAlias;
+            tm.packetSize = c.payloadSize;
+            tm.sendInterval = c.sendInterval;
+            tm.priority = c.priority;
+            tm.nextObjectId = 0;
+            publishedTracks[tKey] = tm;
+            publisherTcpSockets[pid] = peerSocket;
+            publisherTcpSocketsByTrackKey[tKey] = peerSocket;
+            EV_INFO << "Registered TCP track " << tm.trackAlias << " from publisher " << pid << std::endl;
+        }
+        else if (c.type == CTRL_SUBSCRIBE) {
+            std::string sid = c.subscriberId;
+            std::string trackAlias = c.trackNamespace + "/" + c.trackName;
+            TrackKey tKey{c.trackNamespace, c.trackName};
+
+            subscriberTcpSockets[sid] = peerSocket;
+            if (subscriberByTrack.find(tKey) == subscriberByTrack.end())
+                subscriberByTrack[tKey] = std::vector<std::string>();
+            subscriberByTrack[tKey].push_back(sid);
+            EV_INFO << "TCP subscriber " << sid << " subscribed to " << trackAlias << std::endl;
+
+            auto pubIt = publisherTcpSocketsByTrackKey.find(tKey);
+            auto trackIt = publishedTracks.find(tKey);
+            if (pubIt != publisherTcpSocketsByTrackKey.end() && trackIt != publishedTracks.end()) {
+                MoqControlFrame ok;
+                ok.type = CTRL_SUBSCRIBE_OK;
+                ok.trackNamespace = c.trackNamespace;
+                ok.trackName = c.trackName;
+                ok.trackAlias = trackAlias;
+                ok.subscriberId = sid;
+                ok.startObjectId = trackIt->second.nextObjectId;
+                auto pkt = new inet::Packet("SUBSCRIBE_OK");
+                pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(
+                    MoqFraming::encodeEnvelope(MoqFraming::MSG_CONTROL, MoqFraming::encodeControl(ok))));
+                pubIt->second->send(pkt);
+            } else {
+                EV_WARN << "TCP SUBSCRIBE for unknown track " << trackAlias << std::endl;
+            }
+        }
+    }
+
+    void MoqRelayApp::socketClosed(inet::TcpSocket *closedSocket)
+    {
+        int sid = closedSocket->getSocketId();
+        EV_INFO << "TCP socketClosed, socketId=" << sid << std::endl;
+        tcpRecvBuf.erase(sid);
+        tcpFrameStart.erase(sid);
+        for (auto it = subscriberTcpSockets.begin(); it != subscriberTcpSockets.end(); )
+            (it->second == closedSocket) ? it = subscriberTcpSockets.erase(it) : ++it;
+        for (auto it = publisherTcpSockets.begin(); it != publisherTcpSockets.end(); )
+            (it->second == closedSocket) ? it = publisherTcpSockets.erase(it) : ++it;
+        for (auto it = publisherTcpSocketsByTrackKey.begin(); it != publisherTcpSocketsByTrackKey.end(); )
+            (it->second == closedSocket) ? it = publisherTcpSocketsByTrackKey.erase(it) : ++it;
+        if (auto *s = tcpSocketMap.removeSocket(closedSocket)) delete s;
+    }
+
+    // ===================== UDP server path (proto == PROTO_UDP) =====================
+
+    void MoqRelayApp::socketDataArrived(inet::UdpSocket *, inet::Packet *packet)
+    {
+        auto srcAddr = packet->getTag<inet::L3AddressInd>()->getSrcAddress();
+        int srcPort = packet->getTag<inet::L4PortInd>()->getSrcPort();
+        omnetpp::simtime_t now = omnetpp::simTime();
+
+        auto bytes = packet->peekDataAsBytes();
+        const auto& vec = bytes->getBytes();
+        MoqFraming::MoqUdpFragment frag;
+        if (MoqFraming::parseUdpFragment(vec, frag)) {
+            std::string srcKey = srcAddr.str() + "#" + std::to_string(srcPort);
+            auto key = std::make_tuple(srcKey, frag.trackAlias, (long) frag.objectId);
+            auto& r = udpReasm[key];
+            if (r.add(frag, now)) {
+                if (frag.msgClass == MoqFraming::MSG_CONTROL) {
+                    MoqControlFrame c;
+                    size_t consumed;
+                    if (MoqFraming::tryParseControl(r.data, c, consumed))
+                        handleControlFrameUdp(c, srcAddr, srcPort);
+                } else if (frag.msgClass == MoqFraming::MSG_OBJECT) {
+                    MoqObjectFrame f;
+                    size_t consumed;
+                    if (MoqFraming::tryParse(r.data, f, consumed))
+                        onObjectFrame(f, r.data, r.firstByteTime);
+                }
+                udpReasm.erase(key);
+            }
+        }
+        delete packet;
+    }
+
+    // Control handling for UDP (peers identified by source address instead of socket).
+    void MoqRelayApp::handleControlFrameUdp(const MoqControlFrame &c, inet::L3Address srcAddr, int srcPort)
+    {
+        if (c.type == CTRL_ANNOUNCE) {
+            TrackKey tKey{c.trackNamespace, c.trackName};
+            TrackMeta tm;
+            tm.publisherId = c.publisherId;
+            tm.trackId = c.trackId;
+            tm.trackNamespace = c.trackNamespace;
+            tm.trackName = c.trackName;
+            tm.trackAlias = c.trackAlias;
+            tm.packetSize = c.payloadSize;
+            tm.sendInterval = c.sendInterval;
+            tm.priority = c.priority;
+            tm.nextObjectId = 0;
+            publishedTracks[tKey] = tm;
+            publisherUdpAddrByTrackKey[tKey] = {srcAddr, srcPort};
+            EV_INFO << "Registered UDP track " << tm.trackAlias << " from " << srcAddr.str() << std::endl;
+        }
+        else if (c.type == CTRL_SUBSCRIBE) {
+            std::string sid = c.subscriberId;
+            std::string trackAlias = c.trackNamespace + "/" + c.trackName;
+            TrackKey tKey{c.trackNamespace, c.trackName};
+
+            subscriberUdpAddrs[sid] = {srcAddr, srcPort};
+            if (subscriberByTrack.find(tKey) == subscriberByTrack.end())
+                subscriberByTrack[tKey] = std::vector<std::string>();
+            // Avoid duplicate registration if SUBSCRIBE is retransmitted.
+            auto& subs = subscriberByTrack[tKey];
+            if (std::find(subs.begin(), subs.end(), sid) == subs.end()) subs.push_back(sid);
+            EV_INFO << "UDP subscriber " << sid << " subscribed to " << trackAlias << std::endl;
+
+            auto pubIt = publisherUdpAddrByTrackKey.find(tKey);
+            auto trackIt = publishedTracks.find(tKey);
+            if (pubIt != publisherUdpAddrByTrackKey.end() && trackIt != publishedTracks.end()) {
+                MoqControlFrame ok;
+                ok.type = CTRL_SUBSCRIBE_OK;
+                ok.trackNamespace = c.trackNamespace;
+                ok.trackName = c.trackName;
+                ok.trackAlias = trackAlias;
+                ok.subscriberId = sid;
+                ok.startObjectId = trackIt->second.nextObjectId;
+                auto frags = MoqFraming::fragmentFrame(MoqFraming::MSG_CONTROL, trackAlias,
+                                                       -1, MoqFraming::encodeControl(ok), udpFragmentSize);
+                for (auto& d : frags) {
+                    auto pkt = new inet::Packet("SUBSCRIBE_OK");
+                    pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(d));
+                    udpSocket.sendTo(pkt, pubIt->second.first, pubIt->second.second);
+                }
+            } else {
+                EV_WARN << "UDP SUBSCRIBE for unknown track " << trackAlias << std::endl;
+            }
+        }
+    }
+
     // A complete object frame arrived from a publisher; forward it to every subscriber of
     // its track (routing uses the self-describing trackAlias inside the frame).
     void MoqRelayApp::onObjectFrame(const MoqObjectFrame &f, const std::vector<uint8_t> &frameBytes,
@@ -223,41 +446,94 @@ namespace moqveinssim
             forwardToSubscriber(sid, f, frameBytes, firstByteTime);
     }
 
-    // Forward one object frame to a subscriber, sending immediately or queueing if the
-    // subscriber's downstream QUIC send queue is currently full.
+    // Forward one object frame to a subscriber over the active transport.
     void MoqRelayApp::forwardToSubscriber(const std::string &subscriberId, const MoqObjectFrame &f,
                                           const std::vector<uint8_t> &frameBytes, omnetpp::simtime_t firstByteTime)
     {
-        auto sockIt = subscriberSockets.find(subscriberId);
-        auto streamIt = subscriberStreamIds.find({subscriberId, f.trackAlias});
-        if (sockIt == subscriberSockets.end() || streamIt == subscriberStreamIds.end()) {
-            EV_WARN << "Subscriber " << subscriberId << " has no socket/stream, skipping" << std::endl;
-            return;
-        }
-        FwdItem item;
-        item.sock = sockIt->second;
-        item.streamId = streamIt->second;
-        item.bytes = frameBytes;
-        item.payloadLength = f.payloadLength;
-        item.firstByteTime = firstByteTime;
-        item.subscriberId = subscriberId;
-
-        int sockId = item.sock->getSocketId();
-        if (socketBlocked[sockId]) {
-            auto& fifo = socketFifo[sockId];
-            // Finite relay buffer: drop the oldest queued object on overflow (counts as loss).
-            if (fifo.size() >= maxFifoPerStream) {
-                fifo.pop_front();
-                pendingForwardCount--;
-                relayDroppedTotal++;
-                EV_WARN << "Forward queue overflow for socketId=" << sockId << ", dropping oldest" << std::endl;
+        switch (proto) {
+        case PROTO_QUIC: {
+            // QUIC: per-(subscriber,track) data stream, with app-level backpressure (the
+            // subscriber's QUIC send queue can signal full). Behavior unchanged.
+            auto sockIt = subscriberSockets.find(subscriberId);
+            auto streamIt = subscriberStreamIds.find({subscriberId, f.trackAlias});
+            if (sockIt == subscriberSockets.end() || streamIt == subscriberStreamIds.end()) {
+                EV_WARN << "Subscriber " << subscriberId << " has no socket/stream, skipping" << std::endl;
+                return;
             }
-            fifo.push_back(std::move(item));
-            pendingForwardCount++;
-            emit(relayQueueDepthSignal, pendingForwardCount);
-        } else {
-            doForwardSend(item);
+            FwdItem item;
+            item.sock = sockIt->second;
+            item.streamId = streamIt->second;
+            item.bytes = frameBytes;
+            item.payloadLength = f.payloadLength;
+            item.firstByteTime = firstByteTime;
+            item.subscriberId = subscriberId;
+
+            int sockId = item.sock->getSocketId();
+            if (socketBlocked[sockId]) {
+                auto& fifo = socketFifo[sockId];
+                // Finite relay buffer: drop the oldest queued object on overflow (counts as loss).
+                if (fifo.size() >= maxFifoPerStream) {
+                    fifo.pop_front();
+                    pendingForwardCount--;
+                    relayDroppedTotal++;
+                    EV_WARN << "Forward queue overflow for socketId=" << sockId << ", dropping oldest" << std::endl;
+                }
+                fifo.push_back(std::move(item));
+                pendingForwardCount++;
+                emit(relayQueueDepthSignal, pendingForwardCount);
+            } else {
+                doForwardSend(item);
+            }
+            break;
         }
+        case PROTO_TCP: {
+            // TCP: single ordered stream per subscriber; TCP provides its own flow control,
+            // so the object is sent directly (no app-level forwarding queue).
+            auto it = subscriberTcpSockets.find(subscriberId);
+            if (it == subscriberTcpSockets.end()) {
+                EV_WARN << "Subscriber " << subscriberId << " has no TCP socket, skipping" << std::endl;
+                return;
+            }
+            auto pkt = new inet::Packet("TRACK_OBJ_FWD");
+            pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(
+                MoqFraming::encodeEnvelope(MoqFraming::MSG_OBJECT, frameBytes)));
+            it->second->send(pkt);
+            recordForward(subscriberId, f.payloadLength, firstByteTime);
+            break;
+        }
+        case PROTO_UDP: {
+            // UDP: re-fragment the object toward the subscriber's learned address.
+            auto it = subscriberUdpAddrs.find(subscriberId);
+            if (it == subscriberUdpAddrs.end()) {
+                EV_WARN << "Subscriber " << subscriberId << " has no UDP address, skipping" << std::endl;
+                return;
+            }
+            auto frags = MoqFraming::fragmentFrame(MoqFraming::MSG_OBJECT, f.trackAlias,
+                                                   f.objectId, frameBytes, udpFragmentSize);
+            for (auto& d : frags) {
+                auto pkt = new inet::Packet("TRACK_OBJ_FWD");
+                pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(d));
+                udpSocket.sendTo(pkt, it->second.first, it->second.second);
+            }
+            recordForward(subscriberId, f.payloadLength, firstByteTime);
+            break;
+        }
+        }
+    }
+
+    // Update forwarding metrics for one object sent to one subscriber (TCP/UDP paths; the QUIC
+    // path records the same metrics inline in doForwardSend).
+    void MoqRelayApp::recordForward(const std::string &subscriberId, long payloadLength,
+                                    omnetpp::simtime_t firstByteTime)
+    {
+        forward_count[subscriberId] += 1;
+        objectsForwardedTotal++;
+        double delay = (omnetpp::simTime() - firstByteTime).dbl();
+        emit(relayForwardDelaySignal, delay);
+        fwdDelaySum += delay;
+        if (delay > fwdDelayMax) fwdDelayMax = delay;
+        fwdDelayCount++;
+        emit(objectForwardedSignal, (long) payloadLength);
     }
 
     void MoqRelayApp::doForwardSend(const FwdItem &item)
@@ -366,14 +642,22 @@ namespace moqveinssim
         {
             // Route to the accepted client socket that owns this message.
             // Falls back to the listening socket for connection-available events.
-            inet::ISocket *sock = socketMap.findSocketFor(msg);
-            if (sock)
-            {
-                sock->processMessage(msg);
-            }
-            else
-            {
-                socket.processMessage(msg);
+            switch (proto) {
+                case PROTO_QUIC: {
+                    inet::ISocket *sock = socketMap.findSocketFor(msg);
+                    if (sock) sock->processMessage(msg);
+                    else socket.processMessage(msg);
+                    break;
+                }
+                case PROTO_TCP: {
+                    inet::ISocket *sock = tcpSocketMap.findSocketFor(msg);
+                    if (sock) sock->processMessage(msg);
+                    else tcpSocket.processMessage(msg);
+                    break;
+                }
+                case PROTO_UDP:
+                    udpSocket.processMessage(msg);
+                    break;
             }
         }
         else

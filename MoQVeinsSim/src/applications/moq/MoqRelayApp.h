@@ -15,9 +15,12 @@ Date: 5/15/2026
 #include <vector>
 #include <deque>
 #include <string>
+#include <tuple>
 #include <omnetpp.h>
 #include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
+#include "inet/transportlayer/contract/tcp/TcpSocket.h"
+#include "inet/transportlayer/contract/udp/UdpSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
 #include "inet/networklayer/common/L3Address.h"
 #include "inet/common/socket/SocketMap.h"
@@ -25,7 +28,10 @@ Date: 5/15/2026
 #include "models/MoqFraming.h"
 
 namespace moqveinssim {
-class MoqRelayApp : public inet::ApplicationBase, public inet::QuicSocket::ICallback {
+class MoqRelayApp : public inet::ApplicationBase,
+                    public inet::QuicSocket::ICallback,
+                    public inet::TcpSocket::ICallback,
+                    public inet::UdpSocket::ICallback {
 public:
     MoqRelayApp();
     ~MoqRelayApp();
@@ -114,6 +120,32 @@ private:
                              const std::vector<uint8_t>& frameBytes, omnetpp::simtime_t firstByteTime);
     void doForwardSend(const FwdItem& item);
     void flushSocket(int socketId);
+
+    // ---- transport selection (additive; QUIC path unchanged) ----
+    MoqProtocol proto = PROTO_QUIC;
+    int udpFragmentSize = 1200;
+
+    // TCP server state (proto == PROTO_TCP). publishedTracks / subscriberByTrack / forward_count
+    // are shared with the QUIC path; only the socket bookkeeping is transport-specific.
+    inet::TcpSocket tcpSocket;                 // listening socket
+    inet::SocketMap tcpSocketMap;              // accepted connections
+    std::map<int, std::vector<uint8_t>> tcpRecvBuf;          // per-connection byte buffer
+    std::map<int, omnetpp::simtime_t> tcpFrameStart;         // per-connection first-byte time
+    std::unordered_map<std::string, inet::TcpSocket*> publisherTcpSockets;
+    std::unordered_map<TrackKey, inet::TcpSocket*, TrackKeyHash> publisherTcpSocketsByTrackKey;
+    std::unordered_map<std::string, inet::TcpSocket*> subscriberTcpSockets;
+
+    // UDP server state (proto == PROTO_UDP). Peers are identified by address instead of socket.
+    inet::UdpSocket udpSocket;
+    std::unordered_map<TrackKey, std::pair<inet::L3Address, int>, TrackKeyHash> publisherUdpAddrByTrackKey;
+    std::unordered_map<std::string, std::pair<inet::L3Address, int>> subscriberUdpAddrs;
+    // Object/control reassembly keyed by (srcKey, trackAlias, objectId).
+    std::map<std::tuple<std::string, std::string, long>, MoqFraming::UdpObjectReassembler> udpReasm;
+
+    void handleControlFrameTcp(inet::TcpSocket* peerSocket, const MoqControlFrame& c);
+    void handleControlFrameUdp(const MoqControlFrame& c, inet::L3Address srcAddr, int srcPort);
+    void recordForward(const std::string& subscriberId, long payloadLength,
+                       omnetpp::simtime_t firstByteTime);
 protected:
     inet::QuicSocket socket;
     inet::SocketMap socketMap;
@@ -135,6 +167,22 @@ protected:
     virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
     virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
     virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
+
+    // ---- TcpSocket::ICallback (used when proto == PROTO_TCP) ----
+    virtual void socketDataArrived(inet::TcpSocket *socket, inet::Packet *packet, bool urgent) override;
+    virtual void socketAvailable(inet::TcpSocket *socket, inet::TcpAvailableInfo *info) override;
+    virtual void socketEstablished(inet::TcpSocket *socket) override { sendingAllowed = true; }
+    virtual void socketPeerClosed(inet::TcpSocket *socket) override { socket->close(); }
+    virtual void socketClosed(inet::TcpSocket *socket) override;
+    virtual void socketFailure(inet::TcpSocket *socket, int code) override { }
+    virtual void socketStatusArrived(inet::TcpSocket *socket, inet::TcpStatusInfo *status) override { }
+    virtual void socketDeleted(inet::TcpSocket *socket) override { }
+
+    // ---- UdpSocket::ICallback (used when proto == PROTO_UDP) ----
+    virtual void socketDataArrived(inet::UdpSocket *socket, inet::Packet *packet) override;
+    virtual void socketErrorArrived(inet::UdpSocket *socket, inet::Indication *indication) override { delete indication; }
+    virtual void socketClosed(inet::UdpSocket *socket) override { }
+
     virtual void onSubscribe(std::string sid, std::string trackAlias, long streamId);
     virtual void onPublish(std::string pid, TrackMeta);
     virtual void relayTrackData(std::string trackAlias, std::string sid);
