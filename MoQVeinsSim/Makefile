@@ -2,7 +2,7 @@
 # OMNeT++/OMNEST Makefile for $(LIB_PREFIX)MoQVeinsSim
 #
 # This file was generated with the command:
-#  opp_makemake --make-so -f --deep -O out -KINET_4_6_0_PROJ=/home/jhuang/thesiswork/inet-4.6.0 -KVEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git -KSIMU5G_GIT_PROJ=/home/jhuang/thesiswork/simu5g-git -KVEINS_INET_PROJ=/home/jhuang/thesiswork/veins-git/subprojects/veins_inet -DINET_IMPORT -I. -I$$\(INET_4_6_0_PROJ\)/src -I$$\(VEINS_GIT_PROJ\) -Isrc -I$$\(VEINS_GIT_PROJ\)/src -I$$\(SIMU5G_GIT_PROJ\)/src -I$$\(VEINS_GIT_PROJ\)/subprojects/veins_inet/src -L$$\(INET_4_6_0_PROJ\)/src -L$$\(VEINS_GIT_PROJ\)/src -L$$\(SIMU5G_GIT_PROJ\)/src -L$$\(VEINS_GIT_PROJ\)/subprojects/veins_inet/src -Lout/$$\(CONFIGNAME\)/src -lINET$$\(D\) -lveins-git$$\(D\) -lsimu5g$$\(D\) -lveins_inet$$\(D\) -d src -X.
+#  opp_makemake --make-so -f --deep -O out -KINET_4_6_0_PROJ=/home/jhuang/thesiswork/inet-4.6.0 -KVEINS_GIT_PROJ=/home/jhuang/thesiswork/veins-git -KSIMU5G_GIT_PROJ=/home/jhuang/thesiswork/simu5g-git -KVEINS_INET_PROJ=/home/jhuang/thesiswork/veins-git/subprojects/veins_inet -DINET_IMPORT -I. -I$(INET_4_6_0_PROJ)/src -I$(VEINS_GIT_PROJ) -Isrc -I$(VEINS_GIT_PROJ)/src -I$(SIMU5G_GIT_PROJ)/src -I$(VEINS_GIT_PROJ)/subprojects/veins_inet/src -L$(INET_4_6_0_PROJ)/src -L$(VEINS_GIT_PROJ)/src -L$(SIMU5G_GIT_PROJ)/src -L$(VEINS_GIT_PROJ)/subprojects/veins_inet/src -Lout/$(CONFIGNAME)/src -lINET$(D) -lveins-git$(D) -lsimu5g$(D) -lveins_inet$(D) -d src -X.
 #
 
 # Name of target to be created (-o option)
@@ -79,8 +79,6 @@ endif
 
 #------------------------------------------------------------------------------
 # User-supplied makefile fragment(s)
--include makefrag
-
 #------------------------------------------------------------------------------
 
 # Main target

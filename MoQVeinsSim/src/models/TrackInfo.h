@@ -5,7 +5,6 @@
 
 #include <vector>
 #include <omnetpp.h>
-#include <hash_fun.h>
 #include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
