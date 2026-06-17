@@ -74,7 +74,11 @@ void MoqSubscriberApp::handleMessageWhenUp(omnetpp::cMessage *msg)
     if (msg->isSelfMessage()) {
         int id = msg->getKind();
         if (id == TIMER_CONNECT || id == TIMER_LIMIT_RUNTIME){
+            // Connect/limit timers are not track timers; handle and return so the data block
+            // below (which parses the message name as a track id) never sees them. This matters
+            // for UDP, where the connect timer flips sendingAllowed itself.
             handleTimeout(msg);
+            return;
         }
         if (sendingAllowed == true){
             std::string name = msg->getName();
