@@ -66,6 +66,35 @@ class MoqPublisherApp : public inet::ApplicationBase,
         std::deque<long> pendingRecvStreams; // recv stream ids (tag does not survive)
         StreamReassembler controlBuf;        // byte buffer for the control stream
 
+        // ---- QUIC send-side backpressure (MoQ/V2X-faithful priority shedding) ----
+        // QUIC rejects sends once its send queue is full; rather than dropping objects
+        // silently, hold them in a priority-ordered app buffer and flush on drain. On buffer
+        // overflow the lowest-priority, oldest object is evicted (partial reliability: the bulk
+        // low-priority track is shed first, protecting the small high-priority track).
+        struct Pending {
+            long tid = 0;
+            long streamId = 0;
+            long priority = 0;
+            long payloadLength = 0;
+            std::vector<uint8_t> bytes;
+            omnetpp::simtime_t createdAt = 0;
+        };
+        bool quicBlocked = false;                         // QUIC send queue full (async signal)
+        // App-side estimate of QUIC's send-queue occupancy. QUIC sets acceptDataFromApp=false
+        // synchronously when the queue fills but only notifies us asynchronously, so a coincident
+        // high-priority object would be sent into a full queue and rejected. Tracking the estimate
+        // lets us predict "full" synchronously and buffer instead; the drain signal resyncs it.
+        long estQueueBytes = 0;
+        long quicSendQueueLimit = 64L * 1024 * 1024;
+        double quicLowWaterRatio = 0.4;
+        std::map<long, std::deque<Pending>> sendBuffer;   // priority -> FIFO (oldest at front)
+        long sendBufferCount = 0;
+        size_t sendBufferLimit = 2000;
+        long quicShed = 0;     // objects evicted from the send buffer (real, intentional loss)
+        void enqueuePending(Pending&& p);
+        void doSendQuic(const Pending& p);
+        void flushSendBuffer();
+
         // Protocol-agnostic senders / handlers (branch on proto internally).
         void sendControlFrame(const MoqControlFrame& c);
         void sendObjectFrame(const MoqObjectFrame& f, long tid);
@@ -82,6 +111,7 @@ class MoqPublisherApp : public inet::ApplicationBase,
             omnetpp::simtime_t lastSendTime = -1;
         };
         std::unordered_map<long, PubTrackStat> pubStats; // keyed by trackId
+        long quicRejected = 0; // DIAGNOSTIC: objects dropped because QUIC send queue was full
     protected:
         inet::QuicSocket socket;
         virtual void handleMessageWhenUp(inet::cMessage *msg) override;
@@ -99,7 +129,7 @@ class MoqPublisherApp : public inet::ApplicationBase,
 
         virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
         virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
-        virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
+        virtual void socketMsgRejected(inet::QuicSocket *socket) override { quicRejected++; }; // DIAGNOSTIC
 
         // ---- TcpSocket::ICallback (used when proto == PROTO_TCP) ----
         virtual void socketDataArrived(inet::TcpSocket *socket, inet::Packet *packet, bool urgent) override;

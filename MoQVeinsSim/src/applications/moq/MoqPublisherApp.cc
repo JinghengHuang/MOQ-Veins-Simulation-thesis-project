@@ -169,6 +169,14 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
     else if (protoStr == "udp") proto = PROTO_UDP;
     else proto = PROTO_QUIC;
     udpFragmentSize = (int) par("udpFragmentSize").intValue();
+    sendBufferLimit = (size_t) par("sendBufferLimit").intValue();
+    // Mirror QUIC's own send-queue limits so the app's occupancy estimate matches.
+    if (auto* host = getParentModule()) {
+        if (auto* q = host->getSubmodule("quic")) {
+            if (q->hasPar("sendQueueLimit")) quicSendQueueLimit = q->par("sendQueueLimit").intValue();
+            if (q->hasPar("sendQueueLowWaterRatio")) quicLowWaterRatio = q->par("sendQueueLowWaterRatio").doubleValue();
+        }
+    }
 
     connectPort = par("connectPort");
     connectAddress = inet::L3AddressResolver().resolve(par("connectAddress"));
@@ -327,16 +335,24 @@ void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
     auto frame = MoqFraming::encode(f);
     switch (proto) {
         case PROTO_QUIC: {
-            auto packet = new inet::Packet("TRACK_OBJ");
-            packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frame));
             auto iter = trackToStreamMap.find(tid);
             if (iter == trackToStreamMap.end()) {
                 trackToStreamMap[tid] = nextStreamId;
                 nextStreamId += 4;
                 iter = trackToStreamMap.find(tid);
             }
-            // Use the 2-arg send: the 1-arg send(packet) resets the stream id to 0.
-            socket.send(packet, iter->second);
+            // Route through the priority-ordered send buffer instead of handing the object
+            // straight to QUIC: if QUIC's send queue is full it rejects (and silently drops)
+            // sends, so buffer when blocked and flush on drain, highest priority first.
+            Pending p;
+            p.tid = tid;
+            p.streamId = iter->second;
+            p.priority = f.priority;
+            p.payloadLength = f.payloadLength;
+            p.bytes = std::move(frame);
+            p.createdAt = f.creationTime;
+            enqueuePending(std::move(p));
+            flushSendBuffer(); // sends in priority order while QUIC is accepting
             break;
         }
         case PROTO_TCP: {
@@ -356,6 +372,48 @@ void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
             }
             break;
         }
+    }
+}
+
+// Hand one buffered object to QUIC on its per-track data stream.
+void MoqPublisherApp::doSendQuic(const Pending& p) {
+    auto packet = new inet::Packet("TRACK_OBJ");
+    packet->insertAtBack(inet::makeShared<inet::BytesChunk>(p.bytes));
+    // 2-arg send: the 1-arg send(packet) resets the stream id to 0.
+    socket.send(packet, p.streamId);
+    estQueueBytes += (long) p.bytes.size(); // track occupancy to predict "full" synchronously
+}
+
+// Buffer an object while QUIC is blocked, keeping FIFO order within each priority. On overflow,
+// shed the lowest-priority (highest number), oldest object — partial reliability that protects
+// the high-priority track and drops the bulk track first.
+void MoqPublisherApp::enqueuePending(Pending&& p) {
+    long prio = p.priority;
+    sendBuffer[prio].push_back(std::move(p));
+    sendBufferCount++;
+    if (sendBufferCount > (long) sendBufferLimit) {
+        auto last = std::prev(sendBuffer.end()); // highest priority number = lowest priority
+        last->second.pop_front();                // oldest of that priority
+        sendBufferCount--;
+        quicShed++;
+        if (last->second.empty()) sendBuffer.erase(last);
+    }
+}
+
+// QUIC drained: flush buffered objects highest-priority (lowest number) first, oldest within a
+// priority, until QUIC blocks again or the buffer empties.
+void MoqPublisherApp::flushSendBuffer() {
+    // Stop as soon as the estimated occupancy reaches the limit (predicts QUIC's synchronous
+    // "full"), so the next object is buffered rather than rejected. !quicBlocked is a safety net.
+    while (!quicBlocked && estQueueBytes < quicSendQueueLimit && sendBufferCount > 0) {
+        auto it = sendBuffer.begin();
+        while (it != sendBuffer.end() && it->second.empty()) it = sendBuffer.erase(it);
+        if (it == sendBuffer.end()) break;
+        Pending p = std::move(it->second.front());
+        it->second.pop_front();
+        sendBufferCount--;
+        if (it->second.empty()) sendBuffer.erase(it);
+        doSendQuic(p);
     }
 }
 
@@ -405,17 +463,28 @@ void MoqPublisherApp::socketClosed(inet::QuicSocket *socket) {
 }
 void MoqPublisherApp::socketSendQueueFull(inet::QuicSocket *socket)
 {
-    EV_WARN << "Send queue full, QUIC will handle backpressure" << std::endl;
+    // QUIC won't accept more data; buffer subsequent objects instead of letting QUIC reject
+    // (and silently drop) them.
+    quicBlocked = true;
+    EV_DEBUG << "Send queue full; buffering objects" << std::endl;
 }
 
 void MoqPublisherApp::socketSendQueueDrain(inet::QuicSocket *socket)
 {
-    EV_DEBUG << "Send queue drained" << std::endl;
+    quicBlocked = false;
+    // The drain signal means QUIC's real queue fell below the low-water mark; resync the estimate
+    // so the buffer can flush again (otherwise the estimate would stay pinned at the limit).
+    estQueueBytes = (long) (quicSendQueueLimit * quicLowWaterRatio);
+    flushSendBuffer();
+    EV_DEBUG << "Send queue drained; flushed buffer" << std::endl;
 }
 
 void MoqPublisherApp::finish()
 {
+    recordScalar("quicSendRejected", quicRejected); // DIAGNOSTIC: should be ~0 now (was the bug)
+    recordScalar("quicShed", quicShed);             // objects intentionally shed (buffer overflow)
     // Per-track offered-load scalars, used as the denominator for object loss ratio.
+    EV_DEBUG << "Writing scalar to file" << std::endl;
     for (auto& track : tracks) {
         long tid = track.second.trackId;
         const PubTrackStat& ps = pubStats[tid];

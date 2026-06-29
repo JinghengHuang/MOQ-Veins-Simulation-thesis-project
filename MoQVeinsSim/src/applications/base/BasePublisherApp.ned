@@ -9,6 +9,9 @@ simple BasePublisherApp extends SimpleModule like IApp {
         @lifecycleSupport;
         string protocol = default("quic"); // underlying transport: "quic" | "tcp" | "udp"
         int udpFragmentSize @unit(B) = default(1200B); // max inner-frame bytes per UDP datagram
+        // QUIC: max objects buffered when the QUIC send queue is full; on overflow the
+        // lowest-priority, oldest object is dropped (priority/age-aware shedding).
+        int sendBufferLimit = default(2000);
         string localAddress = default(""); // Local address or empty ("")
         int localPort = default(9000); // port number to listen on
         string connectAddress = default(""); // Relay/Server address or empty ("")
