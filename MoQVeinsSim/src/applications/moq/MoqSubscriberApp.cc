@@ -355,6 +355,7 @@ void MoqSubscriberApp::recordObject(const MoqObjectFrame& f, omnetpp::simtime_t 
     ts.received++;
     ts.bytes += f.payloadLength;
     if (f.objectId > ts.highestObjId) ts.highestObjId = f.objectId;
+    if (ts.lowestObjId < 0 || f.objectId < ts.lowestObjId) ts.lowestObjId = f.objectId;
     if (ts.firstRecv < SIMTIME_ZERO) ts.firstRecv = now;
     ts.lastRecv = now;
 
@@ -396,6 +397,14 @@ void MoqSubscriberApp::finish()
 
         recordScalar((prefix + "objectsReceived").c_str(), ts.received);
         recordScalar((prefix + "bytesReceived").c_str(), ts.bytes, "B");
+
+        // DIAGNOSTIC: first/last objectId received and whether the received set is the
+        // contiguous range [lowest..highest] (pure late-join prefix) or has internal gaps.
+        recordScalar((prefix + "firstObjId").c_str(), ts.lowestObjId);
+        recordScalar((prefix + "lastObjId").c_str(), ts.highestObjId);
+        long rangeSpan = ts.highestObjId - ts.lowestObjId + 1;
+        recordScalar((prefix + "rangeSpan").c_str(), rangeSpan);
+        recordScalar((prefix + "internalGaps").c_str(), rangeSpan - ts.received);
 
         // Object loss ratio: objects missing in the [0 .. highestObjId] range that were
         // never fully received. Objects still in flight at sim end are not counted.

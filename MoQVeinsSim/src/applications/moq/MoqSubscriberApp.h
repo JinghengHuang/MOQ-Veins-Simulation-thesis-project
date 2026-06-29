@@ -88,6 +88,7 @@ class MoqSubscriberApp : public inet::ApplicationBase,
             long received = 0;
             long bytes = 0;
             long highestObjId = -1;
+            long lowestObjId = -1;   // DIAGNOSTIC: smallest objectId ever received
             omnetpp::simtime_t firstRecv = -1;
             omnetpp::simtime_t lastRecv = -1;
             double lastLatency = -1;

@@ -436,6 +436,9 @@ namespace moqveinssim
             EV_WARN << "Object with malformed trackAlias '" << f.trackAlias << "', dropping" << std::endl;
             return;
         }
+        // Localization: count distinct object frames received from the publisher for this track,
+        // so any residual subscriber-side loss can be attributed to pub->relay vs relay->sub.
+        recvFromPubByTrack[f.trackAlias]++;
         TrackKey tKey{f.trackAlias.substr(0, slash), f.trackAlias.substr(slash + 1)};
         auto subsIt = subscriberByTrack.find(tKey);
         if (subsIt == subscriberByTrack.end() || subsIt->second.empty()) {
@@ -578,6 +581,11 @@ namespace moqveinssim
         }
         for (auto& fc : forward_count) {
             recordScalar(("subscriber[" + fc.first + "].objectsForwarded").c_str(), fc.second);
+        }
+        // Localization: objects the relay received from the publisher, per track. Compare with
+        // the publisher's objectsSent (pub->relay loss) and the subscribers' counts (relay->sub).
+        for (auto& rc : recvFromPubByTrack) {
+            recordScalar(("track[" + rc.first + "].objectsReceivedFromPub").c_str(), rc.second);
         }
     }
 

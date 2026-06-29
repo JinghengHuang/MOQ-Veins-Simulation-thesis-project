@@ -80,10 +80,12 @@ private:
     omnetpp::simsignal_t objectForwardedSignal = -1;
     long objectsForwardedTotal = 0;
     double fwdDelaySum = 0; double fwdDelayMax = 0; long fwdDelayCount = 0;
+    // Localization: per-track count of object frames received from the publisher.
+    std::unordered_map<std::string, long> recvFromPubByTrack;
 
-    // The delivered packet carries no stream tag and the QUIC "data available" size is
-    // cumulative, so receives are serialized (one in flight per socket, draining a whole
-    // stream each time) and the delivered stream id is recvInFlight[socketId].
+    // The delivered packet carries no stream tag, so receives are serialized (one in flight per
+    // socket, draining a whole stream each time) and the delivered stream id is
+    // recvInFlight[socketId].
     std::map<int, std::set<long>> recvPending; // socketId -> streams with undelivered data
     std::map<int, long> recvInFlight;          // socketId -> stream of the outstanding recv
     static const long CONTROL_STREAM = 0;
