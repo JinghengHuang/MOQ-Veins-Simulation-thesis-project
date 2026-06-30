@@ -382,6 +382,11 @@ void MoqPublisherApp::doSendQuic(const Pending& p) {
     // 2-arg send: the 1-arg send(packet) resets the stream id to 0.
     socket.send(packet, p.streamId);
     estQueueBytes += (long) p.bytes.size(); // track occupancy to predict "full" synchronously
+    // Phase-0 diagnostic: time spent waiting in the app send buffer (enqueue->handed to QUIC).
+    double dwell = (omnetpp::simTime() - p.createdAt).dbl();
+    sendDwellSum += dwell;
+    if (dwell > sendDwellMax) sendDwellMax = dwell;
+    sendDwellCount++;
 }
 
 // Buffer an object while QUIC is blocked, keeping FIFO order within each priority. On overflow,
@@ -483,6 +488,10 @@ void MoqPublisherApp::finish()
 {
     recordScalar("quicSendRejected", quicRejected); // DIAGNOSTIC: should be ~0 now (was the bug)
     recordScalar("quicShed", quicShed);             // objects intentionally shed (buffer overflow)
+    if (sendDwellCount > 0) {
+        recordScalar("sendBufferDwellMean", sendDwellSum / sendDwellCount, "s");
+        recordScalar("sendBufferDwellMax", sendDwellMax, "s");
+    }
     // Per-track offered-load scalars, used as the denominator for object loss ratio.
     EV_DEBUG << "Writing scalar to file" << std::endl;
     for (auto& track : tracks) {

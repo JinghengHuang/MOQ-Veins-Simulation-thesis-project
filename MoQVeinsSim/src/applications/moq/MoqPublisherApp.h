@@ -91,6 +91,9 @@ class MoqPublisherApp : public inet::ApplicationBase,
         long sendBufferCount = 0;
         size_t sendBufferLimit = 2000;
         long quicShed = 0;     // objects evicted from the send buffer (real, intentional loss)
+        // Phase-0 diagnostic: how long objects dwell in the app send buffer before reaching QUIC
+        // (tells us whether the standing queue is in our buffer or downstream in QUIC/radio).
+        double sendDwellSum = 0; double sendDwellMax = 0; long sendDwellCount = 0;
         void enqueuePending(Pending&& p);
         void doSendQuic(const Pending& p);
         void flushSendBuffer();
