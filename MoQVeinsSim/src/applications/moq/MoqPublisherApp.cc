@@ -102,6 +102,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     c.priority = track->priority;
                     c.payloadSize = track->packetSize;
                     c.sendInterval = track->sendInterval;
+                    c.deliveryTimeout = track->deliveryTimeout;
                     c.trackNamespace = track->trackNamespace;
                     c.trackName = track->trackName;
                     c.trackAlias = track->trackAlias;
@@ -223,6 +224,8 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
                 track.packetSize = (*map)["packetSize"].intValueInUnit("B");;
                 track.sendInterval = (*map)["sendInterval"].doubleValueInUnit("s");;
                 track.priority = (*map)["priority"].intValue();
+                track.deliveryTimeout = map->containsKey("objectDeliveryTimeout")
+                                        ? (*map)["objectDeliveryTimeout"].doubleValueInUnit("s") : 0.0;
                 track.nextObjectId = 0;
                 track.timer = new omnetpp::cMessage((std::to_string(track.trackId)).c_str(), PUB_ANNOUNCE);
                 tracks[i] = track;
@@ -351,6 +354,7 @@ void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
             p.payloadLength = f.payloadLength;
             p.bytes = std::move(frame);
             p.createdAt = f.creationTime;
+            { auto tIt = tracks.find(tid); if (tIt != tracks.end()) p.timeout = tIt->second.deliveryTimeout; }
             enqueuePending(std::move(p));
             flushSendBuffer(); // sends in priority order while QUIC is accepting
             break;
@@ -418,6 +422,12 @@ void MoqPublisherApp::flushSendBuffer() {
         it->second.pop_front();
         sendBufferCount--;
         if (it->second.empty()) sendBuffer.erase(it);
+        // Partial reliability: drop objects already older than their delivery timeout instead of
+        // sending stale data (MoQ OBJECT_DELIVERY_TIMEOUT). Frees capacity for fresh objects.
+        if (p.timeout > SIMTIME_ZERO && (omnetpp::simTime() - p.createdAt) > p.timeout) {
+            quicShedStale[p.tid]++;
+            continue;
+        }
         doSendQuic(p);
     }
 }
@@ -504,6 +514,8 @@ void MoqPublisherApp::finish()
         if (span > 0) {
             recordScalar((prefix + "offeredRate").c_str(), ps.bytesSent * 8.0 / span, "bps");
         }
+        auto sIt = quicShedStale.find(tid);
+        recordScalar((prefix + "objectsShedStale").c_str(), sIt != quicShedStale.end() ? sIt->second : 0);
     }
 }
 

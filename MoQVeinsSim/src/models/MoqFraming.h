@@ -66,6 +66,7 @@ struct MoqControlFrame {
     long startObjectId = 0;
     long subscriberPriority = 0;
     omnetpp::simtime_t sendInterval = 0;
+    omnetpp::simtime_t deliveryTimeout = 0; // ANNOUNCE: sender-side stale-drop timeout for the track
     std::string trackNamespace;
     std::string trackName;
     std::string trackAlias;
@@ -157,6 +158,7 @@ inline std::vector<uint8_t> encodeControl(const MoqControlFrame& c) {
     putI64(body, c.startObjectId);
     putI64(body, c.subscriberPriority);
     putI64(body, c.sendInterval.raw());
+    putI64(body, c.deliveryTimeout.raw());
     putStr(body, c.trackNamespace);
     putStr(body, c.trackName);
     putStr(body, c.trackAlias);
@@ -182,6 +184,7 @@ inline bool tryParseControl(const uint8_t* data, size_t size, MoqControlFrame& o
     out.startObjectId = getI64(p); p += 8;
     out.subscriberPriority = getI64(p); p += 8;
     out.sendInterval = omnetpp::SimTime::fromRaw(getI64(p)); p += 8;
+    out.deliveryTimeout = omnetpp::SimTime::fromRaw(getI64(p)); p += 8;
     out.trackNamespace = getStr(p);
     out.trackName = getStr(p);
     out.trackAlias = getStr(p);

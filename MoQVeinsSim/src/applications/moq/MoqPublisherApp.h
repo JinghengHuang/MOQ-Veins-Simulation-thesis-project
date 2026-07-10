@@ -78,6 +78,7 @@ class MoqPublisherApp : public inet::ApplicationBase,
             long payloadLength = 0;
             std::vector<uint8_t> bytes;
             omnetpp::simtime_t createdAt = 0;
+            omnetpp::simtime_t timeout = 0; // sender-side stale-drop timeout (0 = off)
         };
         bool quicBlocked = false;                         // QUIC send queue full (async signal)
         // App-side estimate of QUIC's send-queue occupancy. QUIC sets acceptDataFromApp=false
@@ -90,7 +91,8 @@ class MoqPublisherApp : public inet::ApplicationBase,
         std::map<long, std::deque<Pending>> sendBuffer;   // priority -> FIFO (oldest at front)
         long sendBufferCount = 0;
         size_t sendBufferLimit = 2000;
-        long quicShed = 0;     // objects evicted from the send buffer (real, intentional loss)
+        long quicShed = 0;     // objects evicted from the send buffer (capacity overflow)
+        std::unordered_map<long, long> quicShedStale; // per-track objects dropped past delivery timeout
         // Phase-0 diagnostic: how long objects dwell in the app send buffer before reaching QUIC
         // (tells us whether the standing queue is in our buffer or downstream in QUIC/radio).
         double sendDwellSum = 0; double sendDwellMax = 0; long sendDwellCount = 0;

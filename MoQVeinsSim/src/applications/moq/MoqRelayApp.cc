@@ -187,6 +187,7 @@ namespace moqveinssim
             tm.packetSize = c.payloadSize;
             tm.sendInterval = c.sendInterval;
             tm.priority = c.priority;
+            tm.deliveryTimeout = c.deliveryTimeout;
             tm.nextObjectId = 0;
             publishedTracks[tKey] = tm;
             publisherSockets[pid] = peerSocket;
@@ -286,6 +287,7 @@ namespace moqveinssim
             tm.packetSize = c.payloadSize;
             tm.sendInterval = c.sendInterval;
             tm.priority = c.priority;
+            tm.deliveryTimeout = c.deliveryTimeout;
             tm.nextObjectId = 0;
             publishedTracks[tKey] = tm;
             publisherTcpSockets[pid] = peerSocket;
@@ -385,6 +387,7 @@ namespace moqveinssim
             tm.packetSize = c.payloadSize;
             tm.sendInterval = c.sendInterval;
             tm.priority = c.priority;
+            tm.deliveryTimeout = c.deliveryTimeout;
             tm.nextObjectId = 0;
             publishedTracks[tKey] = tm;
             publisherUdpAddrByTrackKey[tKey] = {srcAddr, srcPort};
@@ -469,6 +472,12 @@ namespace moqveinssim
             item.bytes = frameBytes;
             item.payloadLength = f.payloadLength;
             item.firstByteTime = firstByteTime;
+            item.createdAt = f.creationTime;
+            { auto slash = f.trackAlias.find('/');
+              if (slash != std::string::npos) {
+                  auto tIt = publishedTracks.find(TrackKey{f.trackAlias.substr(0, slash), f.trackAlias.substr(slash + 1)});
+                  if (tIt != publishedTracks.end()) item.timeout = tIt->second.deliveryTimeout;
+              } }
             item.subscriberId = subscriberId;
 
             int sockId = item.sock->getSocketId();
@@ -541,6 +550,12 @@ namespace moqveinssim
 
     void MoqRelayApp::doForwardSend(const FwdItem &item)
     {
+        // Partial reliability: if the object is already past its delivery timeout, drop it instead
+        // of forwarding stale data (MoQ OBJECT_DELIVERY_TIMEOUT, true age from creationTime).
+        if (item.timeout > SIMTIME_ZERO && (omnetpp::simTime() - item.createdAt) > item.timeout) {
+            relayShedStale++;
+            return;
+        }
         auto pkt = new inet::Packet("TRACK_OBJ_FWD");
         pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(item.bytes));
         item.sock->send(pkt, item.streamId);
@@ -574,6 +589,7 @@ namespace moqveinssim
     {
         recordScalar("objectsForwardedTotal", objectsForwardedTotal);
         recordScalar("objectsDroppedQueueOverflow", relayDroppedTotal);
+        recordScalar("objectsShedStale", relayShedStale); // dropped past delivery timeout (partial reliability)
         recordScalar("objectsPendingForwardAtEnd", pendingForwardCount);
         if (fwdDelayCount > 0) {
             recordScalar("meanForwardDelay", fwdDelaySum / fwdDelayCount, "s");

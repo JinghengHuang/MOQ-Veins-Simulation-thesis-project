@@ -28,6 +28,7 @@ namespace moqveinssim
         int priority = 0;
         long nextObjectId = 0;
         omnetpp::simtime_t deadline = 0; // per-track latency deadline (0 = no deadline)
+        omnetpp::simtime_t deliveryTimeout = 0; // sender-side: drop objects older than this (0 = off)
         omnetpp::cMessage *timer = nullptr;
 
 

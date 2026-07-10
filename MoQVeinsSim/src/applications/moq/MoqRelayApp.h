@@ -103,6 +103,8 @@ private:
         std::vector<uint8_t> bytes;
         long payloadLength = 0;
         omnetpp::simtime_t firstByteTime = 0;
+        omnetpp::simtime_t createdAt = 0;   // object creation time (for deadline shedding)
+        omnetpp::simtime_t timeout = 0;     // per-track delivery timeout (0 = off)
         std::string subscriberId;
     };
     // Pipelined forwarding (QUIC governs in-flight via flow + congestion control). If a
@@ -112,6 +114,7 @@ private:
     std::map<int, bool> socketBlocked;             // socketId -> send queue full
     long pendingForwardCount = 0;   // total queued objects (relay queue depth)
     long relayDroppedTotal = 0;     // dropped due to forwarding-queue overflow
+    long relayShedStale = 0;        // dropped because past the per-track delivery timeout
     static const size_t maxFifoPerStream = 1024;
     int nextDataStreamId = 1;       // relay->subscriber data stream ids (1,5,9,...)
 
