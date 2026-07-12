@@ -19,6 +19,7 @@ Date: 5/15/2026
 #include <omnetpp.h>
 #include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
+#include "inet/transportlayer/quic/Quic.h"
 #include "inet/transportlayer/contract/tcp/TcpSocket.h"
 #include "inet/transportlayer/contract/udp/UdpSocket.h"
 #include "inet/applications/base/ApplicationBase.h"
@@ -102,28 +103,46 @@ private:
         long streamId = 0;
         std::vector<uint8_t> bytes;
         long payloadLength = 0;
+        long priority = 0;                  // MoQ track priority (lower number = higher priority)
+        std::string trackAlias;             // for per-track shed accounting
         omnetpp::simtime_t firstByteTime = 0;
         omnetpp::simtime_t createdAt = 0;   // object creation time (for deadline shedding)
         omnetpp::simtime_t timeout = 0;     // per-track delivery timeout (0 = off)
+        // Bytes already handed to QUIC. Same invariant as the publisher: an item with
+        // sentOffset > 0 has bytes on the stream and must be sent to completion, or the
+        // subscriber's length-prefix parser desynchronises permanently.
+        size_t sentOffset = 0;
         std::string subscriberId;
     };
-    // Pipelined forwarding (QUIC governs in-flight via flow + congestion control). If a
-    // subscriber socket's QUIC send queue is full (socketSendQueueFull), objects are buffered
-    // here and flushed on drain; relayQueueDepth = total buffered.
-    std::map<int, std::deque<FwdItem>> socketFifo; // socketId -> backlog when blocked
-    std::map<int, bool> socketBlocked;             // socketId -> send queue full
+    // Downstream send state, one per subscriber socket (each is its own QUIC connection, so each
+    // has its own send queue). Objects wait here in priority order rather than being dumped into
+    // QUIC, so a high-priority object can overtake a bulk one and stale objects can still be shed.
+    struct SockSendState {
+        std::map<long, std::deque<FwdItem>> buffer; // priority -> FIFO (oldest at front)
+        long count = 0;
+        bool blocked = false;   // QUIC send queue full (async signal)
+    };
+    std::map<int, SockSendState> sockSend;  // socketId -> downstream send state
     long pendingForwardCount = 0;   // total queued objects (relay queue depth)
     long relayDroppedTotal = 0;     // dropped due to forwarding-queue overflow
-    long relayShedStale = 0;        // dropped because past the per-track delivery timeout
+    std::map<std::string, long> relayShedStale; // trackAlias -> dropped past the delivery timeout
+    long relayRejected = 0;         // DIAGNOSTIC: sends refused by QUIC (silent loss); must stay 0
     static const size_t maxFifoPerStream = 1024;
     int nextDataStreamId = 1;       // relay->subscriber data stream ids (1,5,9,...)
+    long quicSendQueueLimit = 64L * 1024 * 1024;
+    long quicChunkBytes = 16L * 1024;
+    // QUIC's true send-queue occupancy per subscriber socket, read from the transport before every
+    // write. See MoqPublisherApp: an app-side estimate cannot work, because bytes leave the queue on
+    // ACK, which the app never observes.
+    inet::quic::Quic* quicModule = nullptr;
+    long quicSendQueueLength(int socketId);
 
     void handleControlFrame(inet::QuicSocket* peerSocket, const MoqControlFrame& c);
     void onObjectFrame(const MoqObjectFrame& f, const std::vector<uint8_t>& frameBytes,
                        omnetpp::simtime_t firstByteTime);
     void forwardToSubscriber(const std::string& subscriberId, const MoqObjectFrame& f,
                              const std::vector<uint8_t>& frameBytes, omnetpp::simtime_t firstByteTime);
-    void doForwardSend(const FwdItem& item);
+    void doForwardSendChunk(FwdItem& item);
     void flushSocket(int socketId);
 
     // ---- transport selection (additive; QUIC path unchanged) ----
@@ -171,7 +190,9 @@ protected:
 
     virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
     virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
-    virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
+    // QUIC refused the write and dropped it. Must never happen now that the relay paces its writes
+    // against QUIC's true queue occupancy; a nonzero count means data is being lost silently.
+    virtual void socketMsgRejected(inet::QuicSocket *socket) override { relayRejected++; };
 
     // ---- TcpSocket::ICallback (used when proto == PROTO_TCP) ----
     virtual void socketDataArrived(inet::TcpSocket *socket, inet::Packet *packet, bool urgent) override;

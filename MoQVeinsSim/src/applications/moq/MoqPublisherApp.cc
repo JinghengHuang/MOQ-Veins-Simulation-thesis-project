@@ -126,10 +126,12 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     sendObjectFrame(f, tid);
                     EV_INFO << "Send track object data: " << track->trackAlias.c_str() << std::endl;
 
-                    // Record one data object offered to the network for this track.
+                    // Record one data object offered to the network for this track. What actually
+                    // reaches QUIC is counted separately in doSendQuicChunk: the two differ by the
+                    // objects shed past their delivery timeout or evicted on buffer overflow.
                     PubTrackStat& ps = pubStats[track->trackId];
-                    ps.objectsSent++;
-                    ps.bytesSent += track->packetSize;
+                    ps.objectsOffered++;
+                    ps.bytesOffered += track->packetSize;
                     if (ps.firstSendTime < SIMTIME_ZERO) ps.firstSendTime = omnetpp::simTime();
                     ps.lastSendTime = omnetpp::simTime();
                     emit(objectSentSignal, (long) track->packetSize);
@@ -171,11 +173,13 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
     else proto = PROTO_QUIC;
     udpFragmentSize = (int) par("udpFragmentSize").intValue();
     sendBufferLimit = (size_t) par("sendBufferLimit").intValue();
-    // Mirror QUIC's own send-queue limits so the app's occupancy estimate matches.
+    quicChunkBytes = par("quicChunkBytes").intValue();
+    // Mirror QUIC's own send-queue limit, and keep a handle on the module so the send path can read
+    // the queue's true occupancy before each write.
     if (auto* host = getParentModule()) {
         if (auto* q = host->getSubmodule("quic")) {
             if (q->hasPar("sendQueueLimit")) quicSendQueueLimit = q->par("sendQueueLimit").intValue();
-            if (q->hasPar("sendQueueLowWaterRatio")) quicLowWaterRatio = q->par("sendQueueLowWaterRatio").doubleValue();
+            quicModule = dynamic_cast<inet::quic::Quic*>(q);
         }
     }
 
@@ -379,18 +383,39 @@ void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
     }
 }
 
-// Hand one buffered object to QUIC on its per-track data stream.
-void MoqPublisherApp::doSendQuic(const Pending& p) {
+// Hand the next slice of one buffered object to QUIC on its per-track data stream. Objects are
+// written in quicChunkBytes-sized pieces so a bulk object can never single-handedly exceed QUIC's
+// connection-wide send-queue limit and lock every stream out; the remainder waits in the send
+// buffer, where a higher-priority object can overtake it. Stream byte order is preserved because
+// each track owns its own stream, so interleaving slices of different tracks is safe.
+// Bytes currently sitting in QUIC's send queue (unsent + sent-but-unacked), read from the transport.
+long MoqPublisherApp::quicSendQueueLength() {
+    long len = quicModule == nullptr ? 0 : (long) quicModule->getSendQueueLength(socket.getSocketId());
+    if (len > quicQueueMaxObserved) quicQueueMaxObserved = len;
+    return len;
+}
+
+void MoqPublisherApp::doSendQuicChunk(Pending& p) {
+    size_t remaining = p.bytes.size() - p.sentOffset;
+    size_t n = std::min(remaining, (size_t) quicChunkBytes);
+    auto begin = p.bytes.begin() + p.sentOffset;
     auto packet = new inet::Packet("TRACK_OBJ");
-    packet->insertAtBack(inet::makeShared<inet::BytesChunk>(p.bytes));
+    packet->insertAtBack(inet::makeShared<inet::BytesChunk>(
+        std::vector<uint8_t>(begin, begin + n)));
     // 2-arg send: the 1-arg send(packet) resets the stream id to 0.
     socket.send(packet, p.streamId);
-    estQueueBytes += (long) p.bytes.size(); // track occupancy to predict "full" synchronously
-    // Phase-0 diagnostic: time spent waiting in the app send buffer (enqueue->handed to QUIC).
-    double dwell = (omnetpp::simTime() - p.createdAt).dbl();
-    sendDwellSum += dwell;
-    if (dwell > sendDwellMax) sendDwellMax = dwell;
-    sendDwellCount++;
+    p.sentOffset += n;
+
+    if (p.sentOffset == p.bytes.size()) { // object fully committed to QUIC
+        PubTrackStat& ps = pubStats[p.tid];
+        ps.objectsSent++;
+        ps.bytesSent += (long) p.payloadLength;
+        // Phase-0 diagnostic: time spent waiting in the app send buffer (creation->fully sent).
+        double dwell = (omnetpp::simTime() - p.createdAt).dbl();
+        sendDwellSum += dwell;
+        if (dwell > sendDwellMax) sendDwellMax = dwell;
+        sendDwellCount++;
+    }
 }
 
 // Buffer an object while QUIC is blocked, keeping FIFO order within each priority. On overflow,
@@ -400,12 +425,21 @@ void MoqPublisherApp::enqueuePending(Pending&& p) {
     long prio = p.priority;
     sendBuffer[prio].push_back(std::move(p));
     sendBufferCount++;
-    if (sendBufferCount > (long) sendBufferLimit) {
-        auto last = std::prev(sendBuffer.end()); // highest priority number = lowest priority
-        last->second.pop_front();                // oldest of that priority
-        sendBufferCount--;
-        quicShed++;
-        if (last->second.empty()) sendBuffer.erase(last);
+    if (sendBufferCount <= (long) sendBufferLimit) return;
+
+    // Evict the oldest object of the lowest-priority track that has not started transmitting.
+    // A partially sent object cannot be dropped: its bytes are already on the stream, and the
+    // receiver frames objects by length prefix alone, so it would never resynchronise.
+    for (auto prioIt = sendBuffer.rbegin(); prioIt != sendBuffer.rend(); ++prioIt) {
+        auto& queue = prioIt->second;
+        for (auto obj = queue.begin(); obj != queue.end(); ++obj) {
+            if (obj->sentOffset == 0) {
+                queue.erase(obj);
+                sendBufferCount--;
+                quicShed++;
+                return;
+            }
+        }
     }
 }
 
@@ -414,21 +448,44 @@ void MoqPublisherApp::enqueuePending(Pending&& p) {
 void MoqPublisherApp::flushSendBuffer() {
     // Stop as soon as the estimated occupancy reaches the limit (predicts QUIC's synchronous
     // "full"), so the next object is buffered rather than rejected. !quicBlocked is a safety net.
-    while (!quicBlocked && estQueueBytes < quicSendQueueLimit && sendBufferCount > 0) {
+    // Bytes handed to the socket during this event. socket.send() is a message send: QUIC only
+    // enqueues the data when it processes that message, in a later event, so the queue length read
+    // back here does not yet account for these writes. Carrying them explicitly makes the occupancy
+    // exact within the event, which is what keeps us from overfilling QUIC and having it reject --
+    // and silently drop -- writes from the middle of an object.
+    long inFlightToQuic = 0;
+
+    while (!quicBlocked && sendBufferCount > 0) {
+        if (quicSendQueueLength() + inFlightToQuic >= quicSendQueueLimit) break;
+
         auto it = sendBuffer.begin();
         while (it != sendBuffer.end() && it->second.empty()) it = sendBuffer.erase(it);
         if (it == sendBuffer.end()) break;
-        Pending p = std::move(it->second.front());
-        it->second.pop_front();
-        sendBufferCount--;
-        if (it->second.empty()) sendBuffer.erase(it);
+        Pending& p = it->second.front();
+
         // Partial reliability: drop objects already older than their delivery timeout instead of
         // sending stale data (MoQ OBJECT_DELIVERY_TIMEOUT). Frees capacity for fresh objects.
-        if (p.timeout > SIMTIME_ZERO && (omnetpp::simTime() - p.createdAt) > p.timeout) {
+        // Only an object that has not started transmitting may be dropped (see doSendQuicChunk).
+        bool stale = p.sentOffset == 0 && p.timeout > SIMTIME_ZERO
+                     && (omnetpp::simTime() - p.createdAt) > p.timeout;
+        if (stale) {
             quicShedStale[p.tid]++;
-            continue;
         }
-        doSendQuic(p);
+        else {
+            size_t before = p.sentOffset;
+            doSendQuicChunk(p);
+            inFlightToQuic += (long) (p.sentOffset - before);
+            // Mirror QUIC's admission hysteresis: it stops accepting once the queue reaches
+            // sendQueueLimit and resumes only at the low-water mark, and tells us asynchronously.
+            // Going quiet at the same point it does keeps every write inside its acceptance window.
+            if (quicSendQueueLength() + inFlightToQuic >= quicSendQueueLimit) quicBlocked = true;
+        }
+
+        if (stale || p.sentOffset == p.bytes.size()) { // object finished with, one way or the other
+            it->second.pop_front();
+            sendBufferCount--;
+            if (it->second.empty()) sendBuffer.erase(it);
+        }
     }
 }
 
@@ -487,16 +544,18 @@ void MoqPublisherApp::socketSendQueueFull(inet::QuicSocket *socket)
 void MoqPublisherApp::socketSendQueueDrain(inet::QuicSocket *socket)
 {
     quicBlocked = false;
-    // The drain signal means QUIC's real queue fell below the low-water mark; resync the estimate
-    // so the buffer can flush again (otherwise the estimate would stay pinned at the limit).
-    estQueueBytes = (long) (quicSendQueueLimit * quicLowWaterRatio);
-    flushSendBuffer();
+    flushSendBuffer(); // QUIC has room again; top the queue back up
     EV_DEBUG << "Send queue drained; flushed buffer" << std::endl;
 }
 
 void MoqPublisherApp::finish()
 {
-    recordScalar("quicSendRejected", quicRejected); // DIAGNOSTIC: should be ~0 now (was the bug)
+    // Must stay 0: a rejected write is silently dropped by QUIC, which would tear a hole in the
+    // middle of an object and desync the receiver's parser.
+    recordScalar("quicSendRejected", quicRejected);
+    // Peak occupancy the app ever drove QUIC's send queue to; stays under sendQueueLimit when the
+    // write pacing is working.
+    recordScalar("quicSendQueueMaxObserved", quicQueueMaxObserved, "B");
     recordScalar("quicShed", quicShed);             // objects intentionally shed (buffer overflow)
     if (sendDwellCount > 0) {
         recordScalar("sendBufferDwellMean", sendDwellSum / sendDwellCount, "s");
@@ -508,11 +567,13 @@ void MoqPublisherApp::finish()
         long tid = track.second.trackId;
         const PubTrackStat& ps = pubStats[tid];
         std::string prefix = "track[" + track.second.trackAlias + "].";
+        recordScalar((prefix + "objectsOffered").c_str(), ps.objectsOffered);
+        recordScalar((prefix + "bytesOffered").c_str(), ps.bytesOffered, "B");
         recordScalar((prefix + "objectsSent").c_str(), ps.objectsSent);
         recordScalar((prefix + "bytesSent").c_str(), ps.bytesSent, "B");
         double span = (ps.lastSendTime - ps.firstSendTime).dbl();
         if (span > 0) {
-            recordScalar((prefix + "offeredRate").c_str(), ps.bytesSent * 8.0 / span, "bps");
+            recordScalar((prefix + "offeredRate").c_str(), ps.bytesOffered * 8.0 / span, "bps");
         }
         auto sIt = quicShedStale.find(tid);
         recordScalar((prefix + "objectsShedStale").c_str(), sIt != quicShedStale.end() ? sIt->second : 0);

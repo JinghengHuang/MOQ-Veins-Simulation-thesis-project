@@ -12,6 +12,12 @@ simple BasePublisherApp extends SimpleModule like IApp {
         // QUIC: max objects buffered when the QUIC send queue is full; on overflow the
         // lowest-priority, oldest object is dropped (priority/age-aware shedding).
         int sendBufferLimit = default(2000);
+        // QUIC: max bytes of one object handed to the socket per write. Must stay well under the
+        // quic module's sendQueueLimit, whose admission gate is connection-wide and all-or-nothing:
+        // a single write larger than that limit locks every stream out, high-priority ones included,
+        // until ACKs drain it. Chunking also keeps the backlog in this app's priority-ordered buffer,
+        // where it can still be reordered and shed, rather than stranded inside QUIC.
+        int quicChunkBytes @unit(B) = default(16384B);
         string localAddress = default(""); // Local address or empty ("")
         int localPort = default(9000); // port number to listen on
         string connectAddress = default(""); // Relay/Server address or empty ("")

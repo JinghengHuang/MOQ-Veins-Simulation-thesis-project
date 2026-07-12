@@ -15,6 +15,7 @@ date: 5/15/2026
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/common/packet/chunk/BytesChunk.h"
 #include "models/MoqFraming.h"
+#include <algorithm>
 
 namespace moqveinssim
 {
@@ -58,6 +59,15 @@ namespace moqveinssim
         else if (protoStr == "udp") proto = PROTO_UDP;
         else proto = PROTO_QUIC;
         udpFragmentSize = (int) par("udpFragmentSize").intValue();
+        quicChunkBytes = par("quicChunkBytes").intValue();
+        // Mirror QUIC's own send-queue limit, and keep a handle on the module so the forward path
+        // can read each subscriber connection's true queue occupancy before every write.
+        if (auto* host = getParentModule()) {
+            if (auto* q = host->getSubmodule("quic")) {
+                if (q->hasPar("sendQueueLimit")) quicSendQueueLimit = q->par("sendQueueLimit").intValue();
+                quicModule = dynamic_cast<inet::quic::Quic*>(q);
+            }
+        }
 
         inet::L3Address localAddress = inet::L3AddressResolver().resolve(par("localAddress"));
         int localPort = par("localPort");
@@ -471,6 +481,8 @@ namespace moqveinssim
             item.streamId = streamIt->second;
             item.bytes = frameBytes;
             item.payloadLength = f.payloadLength;
+            item.priority = f.priority;
+            item.trackAlias = f.trackAlias;
             item.firstByteTime = firstByteTime;
             item.createdAt = f.creationTime;
             { auto slash = f.trackAlias.find('/');
@@ -481,21 +493,30 @@ namespace moqveinssim
             item.subscriberId = subscriberId;
 
             int sockId = item.sock->getSocketId();
-            if (socketBlocked[sockId]) {
-                auto& fifo = socketFifo[sockId];
-                // Finite relay buffer: drop the oldest queued object on overflow (counts as loss).
-                if (fifo.size() >= maxFifoPerStream) {
-                    fifo.pop_front();
-                    pendingForwardCount--;
-                    relayDroppedTotal++;
-                    EV_WARN << "Forward queue overflow for socketId=" << sockId << ", dropping oldest" << std::endl;
+            SockSendState& st = sockSend[sockId];
+            st.buffer[item.priority].push_back(std::move(item));
+            st.count++;
+            pendingForwardCount++;
+
+            // Finite relay buffer: on overflow drop the oldest object of the lowest-priority track
+            // that has not started transmitting (a partially sent one cannot be dropped).
+            if (st.count > (long) maxFifoPerStream) {
+                for (auto prioIt = st.buffer.rbegin(); prioIt != st.buffer.rend(); ++prioIt) {
+                    auto& queue = prioIt->second;
+                    auto victim = std::find_if(queue.begin(), queue.end(),
+                                               [](const FwdItem& i) { return i.sentOffset == 0; });
+                    if (victim != queue.end()) {
+                        queue.erase(victim);
+                        st.count--;
+                        pendingForwardCount--;
+                        relayDroppedTotal++;
+                        EV_WARN << "Forward queue overflow for socketId=" << sockId << std::endl;
+                        break;
+                    }
                 }
-                fifo.push_back(std::move(item));
-                pendingForwardCount++;
-                emit(relayQueueDepthSignal, pendingForwardCount);
-            } else {
-                doForwardSend(item);
             }
+            emit(relayQueueDepthSignal, pendingForwardCount);
+            flushSocket(sockId);
             break;
         }
         case PROTO_TCP: {
@@ -548,17 +569,26 @@ namespace moqveinssim
         emit(objectForwardedSignal, (long) payloadLength);
     }
 
-    void MoqRelayApp::doForwardSend(const FwdItem &item)
+    // Hand the next slice of one object to the subscriber's QUIC socket. Objects are written in
+    // quicChunkBytes pieces so a bulk object cannot exceed QUIC's connection-wide send-queue limit
+    // on its own and lock out every stream, the latency-critical one included.
+    // Bytes sitting in one subscriber connection's QUIC send queue (unsent + sent-but-unacked).
+    long MoqRelayApp::quicSendQueueLength(int socketId)
     {
-        // Partial reliability: if the object is already past its delivery timeout, drop it instead
-        // of forwarding stale data (MoQ OBJECT_DELIVERY_TIMEOUT, true age from creationTime).
-        if (item.timeout > SIMTIME_ZERO && (omnetpp::simTime() - item.createdAt) > item.timeout) {
-            relayShedStale++;
-            return;
-        }
+        return quicModule == nullptr ? 0 : (long) quicModule->getSendQueueLength(socketId);
+    }
+
+    void MoqRelayApp::doForwardSendChunk(FwdItem &item)
+    {
+        size_t remaining = item.bytes.size() - item.sentOffset;
+        size_t n = std::min(remaining, (size_t) quicChunkBytes);
+        auto begin = item.bytes.begin() + item.sentOffset;
         auto pkt = new inet::Packet("TRACK_OBJ_FWD");
-        pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(item.bytes));
+        pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>(begin, begin + n)));
         item.sock->send(pkt, item.streamId);
+        item.sentOffset += n;
+
+        if (item.sentOffset < item.bytes.size()) return; // object not fully forwarded yet
 
         forward_count[item.subscriberId] += 1;
         objectsForwardedTotal++;
@@ -570,17 +600,50 @@ namespace moqveinssim
         emit(objectForwardedSignal, (long) item.payloadLength);
     }
 
-    // The subscriber socket's send queue drained — flush queued objects for it.
+    // Send queued objects to one subscriber, highest priority (lowest number) first, until QUIC's
+    // send queue is full or the backlog empties.
     void MoqRelayApp::flushSocket(int socketId)
     {
-        auto it = socketFifo.find(socketId);
-        if (it == socketFifo.end()) return;
-        auto& fifo = it->second;
-        while (!socketBlocked[socketId] && !fifo.empty()) {
-            FwdItem item = std::move(fifo.front());
-            fifo.pop_front();
-            pendingForwardCount--;
-            doForwardSend(item);
+        auto stIt = sockSend.find(socketId);
+        if (stIt == sockSend.end()) return;
+        SockSendState& st = stIt->second;
+
+        // Bytes handed to this socket during the current event; QUIC has not enqueued them yet, so
+        // the queue length read back does not include them (see MoqPublisherApp::flushSendBuffer).
+        long inFlightToQuic = 0;
+
+        while (!st.blocked && st.count > 0) {
+            if (quicSendQueueLength(socketId) + inFlightToQuic >= quicSendQueueLimit) break;
+
+            auto it = st.buffer.begin();
+            while (it != st.buffer.end() && it->second.empty()) it = st.buffer.erase(it);
+            if (it == st.buffer.end()) break;
+            FwdItem& item = it->second.front();
+
+            // Partial reliability: if the object is already past its delivery timeout, drop it
+            // instead of forwarding stale data (MoQ OBJECT_DELIVERY_TIMEOUT, true age from
+            // creationTime). Only an object that has not started transmitting may be dropped.
+            bool stale = item.sentOffset == 0 && item.timeout > SIMTIME_ZERO
+                         && (omnetpp::simTime() - item.createdAt) > item.timeout;
+            if (stale) {
+                relayShedStale[item.trackAlias]++;
+            }
+            else {
+                size_t before = item.sentOffset;
+                doForwardSendChunk(item);
+                inFlightToQuic += (long) (item.sentOffset - before);
+                // Mirror QUIC's admission hysteresis (see MoqPublisherApp): it stops accepting at
+                // sendQueueLimit and resumes only at the low-water mark, so a write in between is
+                // silently dropped and would desync the subscriber's parser.
+                if (quicSendQueueLength(socketId) + inFlightToQuic >= quicSendQueueLimit) st.blocked = true;
+            }
+
+            if (stale || item.sentOffset == item.bytes.size()) {
+                it->second.pop_front();
+                st.count--;
+                pendingForwardCount--;
+                if (it->second.empty()) st.buffer.erase(it);
+            }
         }
         emit(relayQueueDepthSignal, pendingForwardCount);
     }
@@ -589,8 +652,16 @@ namespace moqveinssim
     {
         recordScalar("objectsForwardedTotal", objectsForwardedTotal);
         recordScalar("objectsDroppedQueueOverflow", relayDroppedTotal);
-        recordScalar("objectsShedStale", relayShedStale); // dropped past delivery timeout (partial reliability)
+        recordScalar("quicSendRejected", relayRejected); // must be 0: nonzero = silent loss in QUIC
         recordScalar("objectsPendingForwardAtEnd", pendingForwardCount);
+        // Objects dropped past their delivery timeout (partial reliability), per track: this is
+        // where the intentional loss should land, and it should land on the bulk track.
+        long shedTotal = 0;
+        for (auto& s : relayShedStale) {
+            recordScalar(("track[" + s.first + "].objectsShedStale").c_str(), s.second);
+            shedTotal += s.second;
+        }
+        recordScalar("objectsShedStale", shedTotal);
         if (fwdDelayCount > 0) {
             recordScalar("meanForwardDelay", fwdDelaySum / fwdDelayCount, "s");
             recordScalar("maxForwardDelay", fwdDelayMax, "s");
@@ -612,12 +683,11 @@ namespace moqveinssim
         // Release forwarding/receive state held for this connection so it doesn't leak
         // and the queue-depth metric stays accurate.
         int sockId = closedSocket->getSocketId();
-        auto fit = socketFifo.find(sockId);
-        if (fit != socketFifo.end()) {
-            pendingForwardCount -= (long) fit->second.size();
-            socketFifo.erase(fit);
+        auto fit = sockSend.find(sockId);
+        if (fit != sockSend.end()) {
+            pendingForwardCount -= fit->second.count;
+            sockSend.erase(fit);
         }
-        socketBlocked.erase(sockId);
         recvPending.erase(sockId);
         recvInFlight.erase(sockId);
         for (auto it = recvBuffers.begin(); it != recvBuffers.end(); ) {
@@ -640,15 +710,15 @@ namespace moqveinssim
 
     void MoqRelayApp::socketSendQueueFull(inet::QuicSocket *socket)
     {
-        socketBlocked[socket->getSocketId()] = true;
+        sockSend[socket->getSocketId()].blocked = true;
         EV_DEBUG << "Send queue full on socketId=" << socket->getSocketId() << std::endl;
     }
 
     void MoqRelayApp::socketSendQueueDrain(inet::QuicSocket *socket)
     {
         int sockId = socket->getSocketId();
-        socketBlocked[sockId] = false;
-        flushSocket(sockId);
+        sockSend[sockId].blocked = false;
+        flushSocket(sockId); // QUIC has room again; top the queue back up
     }
 
     void MoqRelayApp::handleMessageWhenUp(omnetpp::cMessage *msg)
