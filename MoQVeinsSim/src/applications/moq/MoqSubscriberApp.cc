@@ -406,14 +406,25 @@ void MoqSubscriberApp::finish()
         recordScalar((prefix + "rangeSpan").c_str(), rangeSpan);
         recordScalar((prefix + "internalGaps").c_str(), rangeSpan - ts.received);
 
-        // Object loss ratio: objects missing in the [0 .. highestObjId] range that were
-        // never fully received. Objects still in flight at sim end are not counted.
+        // Object loss ratio measured from object 0, so every object the publisher emitted before
+        // this car joined the simulation counts as "lost". Subscribers are SUMO vehicles that
+        // spawn mid-run, so this is dominated by that late-join prefix and overstates loss badly
+        // (~38% even on an idle network). Kept for continuity; use gapLossRatio below to reason
+        // about what the network actually dropped.
         long expected = ts.highestObjId + 1;
         long lost = (expected > ts.received) ? (expected - ts.received) : 0;
         recordScalar((prefix + "objectsExpected").c_str(), expected);
         recordScalar((prefix + "objectsLost").c_str(), lost);
         if (expected > 0) {
             recordScalar((prefix + "lossRatio").c_str(), (double) lost / (double) expected);
+        }
+
+        // Loss over the window this subscriber was actually subscribed for: objects missing
+        // *between* the first and last object it saw. This excludes the late-join prefix, so it
+        // measures network/shedding loss rather than when the car happened to spawn.
+        if (ts.received > 0 && rangeSpan > 0) {
+            recordScalar((prefix + "gapLossRatio").c_str(),
+                         (double) (rangeSpan - ts.received) / (double) rangeSpan);
         }
 
         // Per-track goodput over the active reception window.
