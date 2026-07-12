@@ -3,6 +3,7 @@
     <inputs>
         <input pattern="results/MOQ*.sca"/>
         <input pattern="results/MOQ*.vec"/>
+        <input pattern="results_sweep2/*.sca"/>
     </inputs>
     <charts>
         <chart createdWith="OMNeT++ 6.3.0.251110-bb3d6a4731" icon="icons/full/obj/histogramchart.png" id="847261914" name="Histogram-e2ejitter" resultTypes="histogram" template="histogramchart_native" type="HISTOGRAM">
@@ -17864,6 +17865,162 @@ Show over_underflow cell?
             <property name="Plot.Antialias" value="true"/>
             <property name="xaxis_max" value=""/>
             <property name="image_export_width" value="6"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="901000001" name="sweep_bbox_deadlineMiss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Offered-load sweep: BBox deadline-miss ratio against downlink demand, reliable vs partial reliability.
+# Demand = 7 subscribers x PCloud bytes x 8 / 0.2s sendInterval. 5 seeds per load point;
+# points are the mean over seeds, bars the stdev.
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+df = results.get_scalars('name =~ "*BBox*deadlineMissRatio*" AND runattr:configname =~ "Sweep_*"',
+                         include_itervars=True, include_runattrs=True)
+if df.empty:
+    raise chart.ChartScriptError(
+        "No sweep data. Run Sweep_SW and Sweep_Partial with results in results_sweep2/.")
+
+df["pcloud"] = pd.to_numeric(df["pcloud"])
+df["demand"] = 7 * df["pcloud"] * 8 / 0.2 / 1e6   # Mbps
+
+# One value per run (mean across the subscriber cars), then mean +/- stdev across seeds.
+per_run = df.groupby(["configname", "demand", "runID"])["value"].mean().reset_index()
+agg = per_run.groupby(["configname", "demand"])["value"].agg(["mean", "std"]).reset_index()
+
+series = [("Sweep_SW", "Reliable (no shedding)", "--"),
+          ("Sweep_Partial", "Partial reliability (delivery timeout)", "-")]
+
+plt.figure()
+for cfg, label, style in series:
+    d = agg[agg["configname"] == cfg].sort_values("demand")
+    if d.empty:
+        continue
+    plt.errorbar(d["demand"], d["mean"], yerr=d["std"].fillna(0), linestyle=style,
+                 marker="o", capsize=3, linewidth=1.6, label=label)
+
+# The cell tops out around 65 Mbps; shedding only engages once demand crosses it.
+plt.axvline(65, linestyle="--", linewidth=1, color="grey")
+plt.annotate("link saturates", xy=(65, plt.ylim()[0]), xytext=(-4, 6),
+             textcoords="offset points", ha="right", va="bottom", fontsize=8, color="grey")
+
+plt.xlabel("Offered downlink demand (Mbps)")
+plt.ylabel("BBox deadline-miss ratio")
+plt.title("Safety-critical track: deadline misses vs offered load")
+plt.legend()
+plt.grid(alpha=0.3)
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Safety-critical track: deadline misses vs offered load"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="901000002" name="sweep_bbox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Offered-load sweep: BBox mean end-to-end latency (s) against downlink demand, reliable vs partial reliability.
+# Demand = 7 subscribers x PCloud bytes x 8 / 0.2s sendInterval. 5 seeds per load point;
+# points are the mean over seeds, bars the stdev.
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+df = results.get_scalars('name =~ "*BBox*meanLatency*" AND runattr:configname =~ "Sweep_*"',
+                         include_itervars=True, include_runattrs=True)
+if df.empty:
+    raise chart.ChartScriptError(
+        "No sweep data. Run Sweep_SW and Sweep_Partial with results in results_sweep2/.")
+
+df["pcloud"] = pd.to_numeric(df["pcloud"])
+df["demand"] = 7 * df["pcloud"] * 8 / 0.2 / 1e6   # Mbps
+
+# One value per run (mean across the subscriber cars), then mean +/- stdev across seeds.
+per_run = df.groupby(["configname", "demand", "runID"])["value"].mean().reset_index()
+agg = per_run.groupby(["configname", "demand"])["value"].agg(["mean", "std"]).reset_index()
+
+series = [("Sweep_SW", "Reliable (no shedding)", "--"),
+          ("Sweep_Partial", "Partial reliability (delivery timeout)", "-")]
+
+plt.figure()
+for cfg, label, style in series:
+    d = agg[agg["configname"] == cfg].sort_values("demand")
+    if d.empty:
+        continue
+    plt.errorbar(d["demand"], d["mean"], yerr=d["std"].fillna(0), linestyle=style,
+                 marker="o", capsize=3, linewidth=1.6, label=label)
+
+# The cell tops out around 65 Mbps; shedding only engages once demand crosses it.
+plt.axvline(65, linestyle="--", linewidth=1, color="grey")
+plt.annotate("link saturates", xy=(65, plt.ylim()[0]), xytext=(-4, 6),
+             textcoords="offset points", ha="right", va="bottom", fontsize=8, color="grey")
+
+plt.xlabel("Offered downlink demand (Mbps)")
+plt.ylabel("BBox mean end-to-end latency (s)")
+plt.title("Safety-critical track: latency vs offered load")
+plt.legend()
+plt.grid(alpha=0.3)
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Safety-critical track: latency vs offered load"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="901000003" name="sweep_pcloud_gapLoss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Offered-load sweep: PCloud gap-loss ratio against downlink demand, reliable vs partial reliability.
+# Demand = 7 subscribers x PCloud bytes x 8 / 0.2s sendInterval. 5 seeds per load point;
+# points are the mean over seeds, bars the stdev.
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+df = results.get_scalars('name =~ "*PCloud*gapLossRatio*" AND runattr:configname =~ "Sweep_*"',
+                         include_itervars=True, include_runattrs=True)
+if df.empty:
+    raise chart.ChartScriptError(
+        "No sweep data. Run Sweep_SW and Sweep_Partial with results in results_sweep2/.")
+
+df["pcloud"] = pd.to_numeric(df["pcloud"])
+df["demand"] = 7 * df["pcloud"] * 8 / 0.2 / 1e6   # Mbps
+
+# One value per run (mean across the subscriber cars), then mean +/- stdev across seeds.
+per_run = df.groupby(["configname", "demand", "runID"])["value"].mean().reset_index()
+agg = per_run.groupby(["configname", "demand"])["value"].agg(["mean", "std"]).reset_index()
+
+series = [("Sweep_SW", "Reliable (no shedding)", "--"),
+          ("Sweep_Partial", "Partial reliability (delivery timeout)", "-")]
+
+plt.figure()
+for cfg, label, style in series:
+    d = agg[agg["configname"] == cfg].sort_values("demand")
+    if d.empty:
+        continue
+    plt.errorbar(d["demand"], d["mean"], yerr=d["std"].fillna(0), linestyle=style,
+                 marker="o", capsize=3, linewidth=1.6, label=label)
+
+# The cell tops out around 65 Mbps; shedding only engages once demand crosses it.
+plt.axvline(65, linestyle="--", linewidth=1, color="grey")
+plt.annotate("link saturates", xy=(65, plt.ylim()[0]), xytext=(-4, 6),
+             textcoords="offset points", ha="right", va="bottom", fontsize=8, color="grey")
+
+plt.xlabel("Offered downlink demand (Mbps)")
+plt.ylabel("PCloud gap-loss ratio")
+plt.title("Bulk track: intentional loss absorbed (excl. late-join)")
+plt.legend()
+plt.grid(alpha=0.3)
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Bulk track: intentional loss absorbed (excl. late-join)"/>
         </chart>
     </charts>
 </analysis>
