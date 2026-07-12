@@ -143,7 +143,11 @@ BBox deadline-miss is **non-monotonic between 100 KB and 150 KB** — 0.436 at 1
 identically, so it is not a shedding effect — it is something in the transport or radio (plausibly
 a QUIC pacing/cwnd interaction, or handover timing coupling with the 0.2 s send interval).
 
-This needs a root cause before the curve goes in the thesis; a reviewer will ask.
+Deliberately left unexplained for now — **carry it into the Discussion chapter** rather than the
+results: state it as an observed non-monotonicity in the operating region below saturation, note
+that it is seed-stable and config-independent (so not an artifact of shedding), and offer the
+transport/radio interaction as the likely cause. A reviewer will spot the kink in the curve, so it
+is better named than glossed.
 
 ## Other open items
 
