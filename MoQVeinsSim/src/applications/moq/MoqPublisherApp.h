@@ -10,6 +10,8 @@ Date: 5/15/2026
 #include <vector>
 #include <deque>
 #include <map>
+#include <set>
+#include <tuple>
 #include <omnetpp.h>
 #include <unordered_map>
 #include "inet/transportlayer/contract/quic/QuicSocket.h"
@@ -36,7 +38,8 @@ class MoqPublisherApp : public inet::ApplicationBase,
         enum Timer {
             TIMER_CONNECT = -1,
             TIMER_RESET = -2,
-            TIMER_LIMIT_RUNTIME = -3
+            TIMER_LIMIT_RUNTIME = -3,
+            TIMER_TIMEOUT_CHECK = -4
         };
         enum Event {
             PUB_ANNOUNCE,
@@ -45,11 +48,23 @@ class MoqPublisherApp : public inet::ApplicationBase,
         };
         inet::cMessage *timerConnect;
         inet::cMessage *timerLimitRuntime;
+        inet::cMessage *timerTimeoutCheck;   // periodic delivery-timeout sweep over outstanding objects
         std::unordered_map<int, TrackMeta> tracks;
-        std::unordered_map<int, int> trackToStreamMap; // trackId -> per-track DATA stream id
+        // MoQ maps one Subgroup onto one stream (draft-14 section 2.2), so streams are keyed by
+        // (trackId, groupId, subgroupId) rather than by track. A subgroup's stream is created
+        // with its first object and carries every later object of that subgroup.
+        struct SubgroupKey {
+            long tid = 0, groupId = 0, subgroupId = 0;
+            bool operator<(const SubgroupKey& o) const {
+                return std::tie(tid, groupId, subgroupId) < std::tie(o.tid, o.groupId, o.subgroupId);
+            }
+        };
+        std::map<SubgroupKey, long> subgroupStreams;   // subgroup -> its stream id
+        std::set<SubgroupKey> resetSubgroups;          // subgroups whose stream we reset
+
         // Stream 0 is the control stream; data streams are client-bidi 4,8,...
         static const long CONTROL_STREAM = 0;
-        int nextStreamId = 4; // next DATA stream id to assign (client bidi: 4,8,...)
+        long nextStreamId = 4; // next DATA stream id to assign (client bidi: 4,8,...)
         inet::L3Address connectAddress;
         unsigned int connectPort;
         bool sendingAllowed = false;
@@ -74,6 +89,7 @@ class MoqPublisherApp : public inet::ApplicationBase,
         // low-priority track is shed first, protecting the small high-priority track).
         struct Pending {
             long tid = 0;
+            SubgroupKey subgroup;
             long streamId = 0;
             long priority = 0;
             long payloadLength = 0;
@@ -81,8 +97,10 @@ class MoqPublisherApp : public inet::ApplicationBase,
             omnetpp::simtime_t createdAt = 0;
             omnetpp::simtime_t timeout = 0; // sender-side stale-drop timeout (0 = off)
             // Bytes of this object already handed to QUIC. An object with sentOffset > 0 has bytes
-            // on the wire and MUST be sent to completion: the receiver frames objects by a length
-            // prefix alone, so a truncated object followed by the next one desyncs its parser.
+            // on its subgroup's stream, so it cannot simply be dropped -- the receiver frames
+            // objects by a length prefix alone and would never resynchronise. It is abandoned by
+            // resetting that stream instead (RESET_STREAM), which discards the partial object at
+            // both ends, and with it the rest of the subgroup.
             size_t sentOffset = 0;
         };
         bool quicBlocked = false;                         // QUIC send queue full (async signal)
@@ -106,10 +124,31 @@ class MoqPublisherApp : public inet::ApplicationBase,
         size_t sendBufferLimit = 2000;
         long quicShed = 0;     // objects evicted from the send buffer (capacity overflow)
         std::unordered_map<long, long> quicShedStale; // per-track objects dropped past delivery timeout
+        long subgroupResets = 0;  // subgroup streams reset because an object timed out
+
+        // Objects fully written to QUIC but not yet known to be delivered. MoQ's delivery timeout
+        // (draft-14 sections 9.2.1.2 and 10.4.3) applies to these too, not just to what is still
+        // sitting in our send buffer: a stale object queued inside QUIC is exactly what a stream
+        // reset is meant to reclaim. Without this the timeout is toothless whenever the transport
+        // buffer is deep, because objects leave the app buffer long before they age out.
+        struct OutstandingObj {
+            SubgroupKey subgroup;
+            long streamId = 0;
+            long tid = 0;
+            omnetpp::simtime_t createdAt = 0;
+            omnetpp::simtime_t timeout = 0;
+        };
+        std::deque<OutstandingObj> outstanding;
+        double timeoutCheckInterval = 0.05;
+        void checkOutstandingTimeouts();
+        // Objects abandoned AFTER being written to QUIC (counted separately from objectsShedStale,
+        // which are those dropped before any byte was written).
+        std::unordered_map<long, long> resetAfterSend;
         // Phase-0 diagnostic: how long objects dwell in the app send buffer before reaching QUIC
         // (tells us whether the standing queue is in our buffer or downstream in QUIC/radio).
         double sendDwellSum = 0; double sendDwellMax = 0; long sendDwellCount = 0;
         void enqueuePending(Pending&& p);
+        void resetSubgroupStream(const SubgroupKey& key, long streamId, int errorCode);
         void doSendQuicChunk(Pending& p);
         void flushSendBuffer();
 

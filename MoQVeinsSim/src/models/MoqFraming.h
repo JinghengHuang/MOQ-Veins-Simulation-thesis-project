@@ -2,18 +2,25 @@
 /*
  * MoQ-style self-delimiting object framing carried over a QUIC stream as raw bytes.
  *
+ * Data model (draft-ietf-moq-transport-14 sections 2.1-2.4): a Track contains Groups, a Group
+ * contains Subgroups, and a Subgroup is a sequence of Objects in ascending Object ID order that
+ * is carried on ONE stream ("Objects from two subgroups cannot be sent on the same stream").
+ * A Group is a random-access point. The subgroup-to-stream mapping is what makes the delivery
+ * timeout enforceable: when an object exceeds it, the publisher resets the subgroup's stream
+ * (section 10.4.3), abandoning that object's in-flight bytes and the rest of its subgroup.
+ *
  * Each object is encoded as a length-prefixed record:
  *   [uint32 bodyLen]
- *   body: [int64 trackId][int64 groupId][int64 objectId][int64 priority]
+ *   body: [int64 trackId][int64 groupId][int64 subgroupId][int64 objectId][int64 priority]
  *         [int64 payloadLength][int64 creationTimeRaw]
  *         [uint32 aliasLen][aliasLen bytes trackAlias]
  *         [payloadLength bytes payload]   // zero-filled; content is irrelevant in sim
- *   bodyLen = 6*8 + 4 + aliasLen + payloadLength
+ *   bodyLen = 7*8 + 4 + aliasLen + payloadLength
  *
  * Because every object is a homogeneous BytesChunk, consecutive objects on a stream
  * coalesce into one BytesChunk (instead of a SequenceChunk, which INET QUIC mis-parses).
  * The receiver accumulates the byte stream and delimits objects via bodyLen, mirroring
- * how MoQ Transport frames objects on a subgroup/group stream.
+ * how MoQ Transport frames objects on a subgroup stream.
  */
 #pragma once
 
@@ -32,9 +39,32 @@ namespace moqveinssim {
 // datagrams with application-layer fragmentation.
 enum MoqProtocol { PROTO_QUIC, PROTO_TCP, PROTO_UDP };
 
+// --- Mapping MoQ priorities onto QUIC stream priorities ---------------------------------
+// MoQ and QUIC agree on the convention that a lower number is higher priority. MoQ draft-14
+// section 7.2 additionally says "the control stream SHOULD be prioritized higher than all
+// subscribed Objects", so QUIC priority 0 is reserved for the control stream and a track's
+// publisher priority p is mapped to QUIC priority p+1. QUIC itself defines no priority
+// mechanism (RFC 9000 section 2.3 leaves it to the implementation and its API), so this is
+// only honoured when the Quic module runs with streamScheduler = "Priority".
+constexpr int CONTROL_STREAM_PRIORITY = 0;
+
+// Application error codes carried on RESET_STREAM (RFC 9000 section 19.4), so a packet trace
+// says why an object's stream was abandoned. DELIVERY_TIMEOUT is the standard MoQ reason
+// (draft-14 section 10.4.3); SEND_BUFFER_OVERFLOW is our own finite-buffer eviction.
+constexpr int MOQ_ERR_DELIVERY_TIMEOUT = 0x2;      // matches the DELIVERY_TIMEOUT param type
+constexpr int MOQ_ERR_SEND_BUFFER_OVERFLOW = 0x100;
+
+inline int quicPriorityOf(long moqPriority) {
+    long p = moqPriority + 1;
+    if (p < 1) p = 1;        // never let a track outrank the control stream
+    if (p > 255) p = 255;    // QUIC/MoQ priorities are a single byte
+    return (int) p;
+}
+
 struct MoqObjectFrame {
     long trackId = 0;
     long groupId = 0;
+    long subgroupId = 0;
     long objectId = 0;
     long priority = 0;
     long payloadLength = 0;
@@ -97,9 +127,10 @@ inline int64_t getI64(const uint8_t* p) {
 // Encode an object into a self-delimiting frame (header fields + zero-filled payload).
 inline std::vector<uint8_t> encode(const MoqObjectFrame& f) {
     std::vector<uint8_t> body;
-    body.reserve(6 * 8 + 4 + f.trackAlias.size() + (size_t) f.payloadLength);
+    body.reserve(7 * 8 + 4 + f.trackAlias.size() + (size_t) f.payloadLength);
     putI64(body, f.trackId);
     putI64(body, f.groupId);
+    putI64(body, f.subgroupId);
     putI64(body, f.objectId);
     putI64(body, f.priority);
     putI64(body, f.payloadLength);
@@ -124,6 +155,7 @@ inline bool tryParse(const uint8_t* data, size_t size, MoqObjectFrame& out, size
     const uint8_t* p = data + 4;
     out.trackId = getI64(p); p += 8;
     out.groupId = getI64(p); p += 8;
+    out.subgroupId = getI64(p); p += 8;
     out.objectId = getI64(p); p += 8;
     out.priority = getI64(p); p += 8;
     out.payloadLength = getI64(p); p += 8;

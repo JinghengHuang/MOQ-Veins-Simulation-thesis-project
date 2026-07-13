@@ -19,11 +19,15 @@ MoqPublisherApp::MoqPublisherApp() {
 
     timerLimitRuntime = new inet::cMessage("MOQ Publisher Timer - Runtime limit");
     timerLimitRuntime->setKind(TIMER_LIMIT_RUNTIME);
+
+    timerTimeoutCheck = new inet::cMessage("MOQ Publisher Timer - Delivery timeout sweep");
+    timerTimeoutCheck->setKind(TIMER_TIMEOUT_CHECK);
 }
 
 MoqPublisherApp::~MoqPublisherApp() {
     cancelAndDelete(timerConnect);
     cancelAndDelete(timerLimitRuntime);
+    cancelAndDelete(timerTimeoutCheck);
     
     for (auto& track : tracks) {
         cancelAndDelete(track.second.timer);
@@ -54,6 +58,10 @@ void MoqPublisherApp::handleTimeout(omnetpp::cMessage *msg)
                     break;
             }
             break;
+        case TIMER_TIMEOUT_CHECK:
+            checkOutstandingTimeouts();
+            scheduleAt(omnetpp::simTime() + timeoutCheckInterval, timerTimeoutCheck);
+            break;
         case TIMER_LIMIT_RUNTIME:
             switch (proto) {
                 case PROTO_QUIC: socket.close(); break;
@@ -74,7 +82,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
     EV_DEBUG << "SELF_MESSAGE: " << msg->isSelfMessage() << std::endl;
     if (msg->isSelfMessage()) {
         int id = msg->getKind();
-        if (id == TIMER_CONNECT || id == TIMER_LIMIT_RUNTIME){
+        if (id == TIMER_CONNECT || id == TIMER_LIMIT_RUNTIME || id == TIMER_TIMEOUT_CHECK){
             // Connect/limit timers are not track timers; handle and return so the data block
             // below (which parses the message name as a track id) never sees them. This matters
             // for UDP, where the connect timer flips sendingAllowed itself.
@@ -117,7 +125,14 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                     MoqObjectFrame f;
                     f.trackId = track->trackId;
                     f.trackAlias = track->trackAlias;
-                    f.groupId = 0; // single group for now
+                    // Group the object per the track's data model (draft-14 sections 2.2-2.3):
+                    // every objectsPerGroup consecutive objects form one Group (one random-access
+                    // point), each Group carrying a single Subgroup that owns one stream.
+                    // objectId stays a monotonic per-track sequence number, which is what the
+                    // receivers use to detect gaps.
+                    long perGroup = track->objectsPerGroup > 0 ? track->objectsPerGroup : 1;
+                    f.groupId = track->nextObjectId / perGroup;
+                    f.subgroupId = 0; // one subgroup per group: no layered//temporal structure here
                     f.objectId = track->nextObjectId;
                     f.priority = track->priority;
                     f.payloadLength = track->packetSize;
@@ -230,6 +245,9 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
                 track.priority = (*map)["priority"].intValue();
                 track.deliveryTimeout = map->containsKey("objectDeliveryTimeout")
                                         ? (*map)["objectDeliveryTimeout"].doubleValueInUnit("s") : 0.0;
+                // How many objects form one Group/Subgroup, i.e. one stream (draft-14 2.2-2.3).
+                track.objectsPerGroup = map->containsKey("objectsPerGroup")
+                                        ? (*map)["objectsPerGroup"].intValue() : 1;
                 track.nextObjectId = 0;
                 track.timer = new omnetpp::cMessage((std::to_string(track.trackId)).c_str(), PUB_ANNOUNCE);
                 tracks[i] = track;
@@ -237,7 +255,11 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
         }
     }
 
+    timeoutCheckInterval = par("deliveryTimeoutCheckInterval").doubleValue();
+
     scheduleAt(inet::simTime() + par("connectTime"), timerConnect);
+    if (proto == PROTO_QUIC)
+        scheduleAt(inet::simTime() + timeoutCheckInterval, timerTimeoutCheck);
 }
 
 void MoqPublisherApp::handleStopOperation(inet::LifecycleOperation *operation)
@@ -313,7 +335,7 @@ void MoqPublisherApp::sendControlFrame(const MoqControlFrame& c) {
         case PROTO_QUIC: {
             auto packet = new inet::Packet("ANNOUNCE");
             packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frame));
-            socket.send(packet, CONTROL_STREAM);
+            socket.send(packet, CONTROL_STREAM, CONTROL_STREAM_PRIORITY);
             break;
         }
         case PROTO_TCP: {
@@ -342,18 +364,29 @@ void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
     auto frame = MoqFraming::encode(f);
     switch (proto) {
         case PROTO_QUIC: {
-            auto iter = trackToStreamMap.find(tid);
-            if (iter == trackToStreamMap.end()) {
-                trackToStreamMap[tid] = nextStreamId;
-                nextStreamId += 4;
-                iter = trackToStreamMap.find(tid);
+            // MoQ maps one Subgroup onto one stream (draft-14 section 2.2). Objects of the same
+            // subgroup share a stream, in ascending object id; a new subgroup opens a new stream.
+            // This is what makes the delivery timeout enforceable: a stale object's subgroup
+            // stream can be reset (section 10.4.3), abandoning its in-flight bytes. On one
+            // long-lived per-track stream a reset would kill the track forever, and a truncated
+            // object would permanently desynchronise the receiver's length-prefix parser.
+            SubgroupKey key{tid, f.groupId, f.subgroupId};
+
+            // The subgroup's stream was reset (an earlier object in it timed out), so the rest of
+            // the subgroup is gone with it -- section 10.4.3's reset abandons the whole stream.
+            if (resetSubgroups.count(key)) {
+                quicShedStale[tid]++;
+                return;
             }
-            // Route through the priority-ordered send buffer instead of handing the object
-            // straight to QUIC: if QUIC's send queue is full it rejects (and silently drops)
-            // sends, so buffer when blocked and flush on drain, highest priority first.
+
+            auto sIt = subgroupStreams.find(key);
+            if (sIt == subgroupStreams.end())
+                sIt = subgroupStreams.emplace(key, (nextStreamId += 4) - 4).first;
+
             Pending p;
             p.tid = tid;
-            p.streamId = iter->second;
+            p.subgroup = key;
+            p.streamId = sIt->second;
             p.priority = f.priority;
             p.payloadLength = f.payloadLength;
             p.bytes = std::move(frame);
@@ -402,11 +435,21 @@ void MoqPublisherApp::doSendQuicChunk(Pending& p) {
     auto packet = new inet::Packet("TRACK_OBJ");
     packet->insertAtBack(inet::makeShared<inet::BytesChunk>(
         std::vector<uint8_t>(begin, begin + n)));
-    // 2-arg send: the 1-arg send(packet) resets the stream id to 0.
-    socket.send(packet, p.streamId);
+    // 2-arg send: the 1-arg send(packet) resets the stream id to 0. The third argument carries
+    // the MoQ publisher priority down to QUIC's stream scheduler (MoQ send order, draft-14
+    // section 7.2), which only has an effect when quic.streamScheduler = "Priority"; with the
+    // default round-robin scheduler QUIC ignores it and all streams are served equally.
+    socket.send(packet, p.streamId, quicPriorityOf(p.priority));
     p.sentOffset += n;
 
     if (p.sentOffset == p.bytes.size()) { // object fully committed to QUIC
+        // The object is now queued inside QUIC, beyond the reach of the send buffer. Keep
+        // tracking it: MoQ's delivery timeout applies until it is actually delivered, and a
+        // stale object still sitting in the transport queue is exactly what a stream reset is
+        // for (draft-14 sections 9.2.1.2 and 10.4.3).
+        if (p.timeout > SIMTIME_ZERO)
+            outstanding.push_back({p.subgroup, p.streamId, p.tid, p.createdAt, p.timeout});
+
         PubTrackStat& ps = pubStats[p.tid];
         ps.objectsSent++;
         ps.bytesSent += (long) p.payloadLength;
@@ -418,6 +461,46 @@ void MoqPublisherApp::doSendQuicChunk(Pending& p) {
     }
 }
 
+// Sweep the objects already written to QUIC and reset the stream of any that have outrun their
+// delivery timeout (draft-14 section 10.4.3: an object exceeding the delivery timeout MUST cause
+// the publisher to reset the underlying stream). Without this the timeout only ever sees the app
+// send buffer, so it does nothing whenever the transport buffer is deep enough that objects age
+// out *after* being handed to QUIC -- which is precisely when abandoning them is worth doing.
+//
+// We get no delivery notification from QUIC, so an object may in fact have arrived by the time we
+// reset its stream. That is harmless: the receiver has already parsed and recorded it, and the
+// reset only discards reassembly data it has not yet consumed.
+void MoqPublisherApp::checkOutstandingTimeouts() {
+    omnetpp::simtime_t now = omnetpp::simTime();
+    for (auto it = outstanding.begin(); it != outstanding.end(); ) {
+        if (resetSubgroups.count(it->subgroup)) {   // stream already gone
+            it = outstanding.erase(it);
+            continue;
+        }
+        if (now - it->createdAt > it->timeout) {
+            resetSubgroupStream(it->subgroup, it->streamId, MOQ_ERR_DELIVERY_TIMEOUT);
+            resetAfterSend[it->tid]++;
+            it = outstanding.erase(it);
+            continue;
+        }
+        ++it;
+    }
+}
+
+// Reset the QUIC stream carrying a subgroup (MoQ draft-14 section 10.4.3: an object that
+// exceeds its delivery timeout MUST cause the publisher to reset the underlying stream). The
+// reset discards the object's bytes still queued inside QUIC and stops them being retransmitted,
+// and tells the receiver to discard the partial object. Because a stream carries a whole
+// subgroup, the rest of that subgroup goes with it -- objects already buffered are dropped when
+// they surface in flushSendBuffer, and later objects of the subgroup are refused in
+// sendObjectFrame.
+void MoqPublisherApp::resetSubgroupStream(const SubgroupKey& key, long streamId, int errorCode) {
+    socket.resetStream(streamId, errorCode);
+    resetSubgroups.insert(key);
+    subgroupStreams.erase(key);
+    subgroupResets++;
+}
+
 // Buffer an object while QUIC is blocked, keeping FIFO order within each priority. On overflow,
 // shed the lowest-priority (highest number), oldest object — partial reliability that protects
 // the high-priority track and drops the bulk track first.
@@ -427,19 +510,24 @@ void MoqPublisherApp::enqueuePending(Pending&& p) {
     sendBufferCount++;
     if (sendBufferCount <= (long) sendBufferLimit) return;
 
-    // Evict the oldest object of the lowest-priority track that has not started transmitting.
-    // A partially sent object cannot be dropped: its bytes are already on the stream, and the
-    // receiver frames objects by length prefix alone, so it would never resynchronise.
+    // Evict the oldest object of the lowest-priority track. An object that has already started
+    // transmitting can be evicted as well now that each object owns its stream: resetting the
+    // stream discards its bytes and tells the receiver to drop the partial object.
+    //
+    // NOTE: this priority-ordered eviction is NOT a MoQ mechanism. MoQ's only dropping primitive
+    // is the age-based DELIVERY_TIMEOUT, which is priority-blind; priority governs transmission
+    // order only (section 7.2). This eviction exists solely because a real send buffer is finite,
+    // and is reported separately (quicShed) from the standard-conformant timeout shedding.
     for (auto prioIt = sendBuffer.rbegin(); prioIt != sendBuffer.rend(); ++prioIt) {
         auto& queue = prioIt->second;
-        for (auto obj = queue.begin(); obj != queue.end(); ++obj) {
-            if (obj->sentOffset == 0) {
-                queue.erase(obj);
-                sendBufferCount--;
-                quicShed++;
-                return;
-            }
-        }
+        if (queue.empty()) continue;
+        auto obj = queue.begin();
+        if (obj->sentOffset > 0)
+            resetSubgroupStream(obj->subgroup, obj->streamId, MOQ_ERR_SEND_BUFFER_OVERFLOW);
+        queue.erase(obj);
+        sendBufferCount--;
+        quicShed++;
+        return;
     }
 }
 
@@ -463,12 +551,27 @@ void MoqPublisherApp::flushSendBuffer() {
         if (it == sendBuffer.end()) break;
         Pending& p = it->second.front();
 
+        // This object's subgroup stream was reset by an earlier timeout, so the object went with
+        // it: a reset abandons the whole stream, and with it the rest of the subgroup
+        // (section 10.4.3). Dropped lazily here rather than by walking the buffer at reset time.
+        if (resetSubgroups.count(p.subgroup)) {
+            quicShedStale[p.tid]++;
+            it->second.pop_front();
+            sendBufferCount--;
+            if (it->second.empty()) sendBuffer.erase(it);
+            continue;
+        }
+
         // Partial reliability: drop objects already older than their delivery timeout instead of
-        // sending stale data (MoQ OBJECT_DELIVERY_TIMEOUT). Frees capacity for fresh objects.
-        // Only an object that has not started transmitting may be dropped (see doSendQuicChunk).
-        bool stale = p.sentOffset == 0 && p.timeout > SIMTIME_ZERO
+        // sending stale data (MoQ DELIVERY_TIMEOUT, draft-14 section 9.2.1.2). Frees capacity for
+        // fresh objects. If the object has already started transmitting, section 10.4.3 requires
+        // the publisher to RESET its subgroup's stream: that discards the bytes still queued in
+        // QUIC, stops them being retransmitted, and tells the receiver to drop the partial object.
+        bool stale = p.timeout > SIMTIME_ZERO
                      && (omnetpp::simTime() - p.createdAt) > p.timeout;
         if (stale) {
+            if (p.sentOffset > 0)
+                resetSubgroupStream(p.subgroup, p.streamId, MOQ_ERR_DELIVERY_TIMEOUT);
             quicShedStale[p.tid]++;
         }
         else {
@@ -556,7 +659,8 @@ void MoqPublisherApp::finish()
     // Peak occupancy the app ever drove QUIC's send queue to; stays under sendQueueLimit when the
     // write pacing is working.
     recordScalar("quicSendQueueMaxObserved", quicQueueMaxObserved, "B");
-    recordScalar("quicShed", quicShed);             // objects intentionally shed (buffer overflow)
+    recordScalar("quicShed", quicShed);                   // objects evicted on buffer overflow
+    recordScalar("subgroupStreamResets", subgroupResets); // RESET_STREAM sent (section 10.4.3)
     if (sendDwellCount > 0) {
         recordScalar("sendBufferDwellMean", sendDwellSum / sendDwellCount, "s");
         recordScalar("sendBufferDwellMax", sendDwellMax, "s");
@@ -577,6 +681,9 @@ void MoqPublisherApp::finish()
         }
         auto sIt = quicShedStale.find(tid);
         recordScalar((prefix + "objectsShedStale").c_str(), sIt != quicShedStale.end() ? sIt->second : 0);
+        // Objects abandoned after they had already been written to QUIC (stream reset).
+        auto rIt = resetAfterSend.find(tid);
+        recordScalar((prefix + "objectsResetAfterSend").c_str(), rIt != resetAfterSend.end() ? rIt->second : 0);
     }
 }
 

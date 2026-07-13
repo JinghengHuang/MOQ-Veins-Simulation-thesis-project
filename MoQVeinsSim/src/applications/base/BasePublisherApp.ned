@@ -9,6 +9,10 @@ simple BasePublisherApp extends SimpleModule like IApp {
         @lifecycleSupport;
         string protocol = default("quic"); // underlying transport: "quic" | "tcp" | "udp"
         int udpFragmentSize @unit(B) = default(1200B); // max inner-frame bytes per UDP datagram
+        // How often the sender sweeps objects it has already written to the transport and resets
+        // the stream of any that have exceeded their delivery timeout (MoQ draft-14 10.4.3).
+        // Bounds how late a stale object can be reclaimed; it is not the timeout itself.
+        double deliveryTimeoutCheckInterval @unit(s) = default(0.05s);
         // QUIC: max objects buffered when the QUIC send queue is full; on overflow the
         // lowest-priority, oldest object is dropped (priority/age-aware shedding).
         int sendBufferLimit = default(2000);

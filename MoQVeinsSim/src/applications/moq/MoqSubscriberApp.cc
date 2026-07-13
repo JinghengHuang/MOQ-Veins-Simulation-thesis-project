@@ -257,7 +257,7 @@ void MoqSubscriberApp::sendControlFrame(const MoqControlFrame& c) {
         case PROTO_QUIC: {
             auto packet = new inet::Packet("SUBSCRIBE");
             packet->insertAtBack(inet::makeShared<inet::BytesChunk>(frame));
-            socket.send(packet, CONTROL_STREAM);
+            socket.send(packet, CONTROL_STREAM, CONTROL_STREAM_PRIORITY);
             break;
         }
         case PROTO_TCP: {
@@ -388,8 +388,25 @@ MoqSubscriberApp::SubTrackStat& MoqSubscriberApp::trackStat(const std::string& t
     return subStats[trackAlias];
 }
 
+// The relay abandoned an object mid-transfer (RESET_STREAM, i.e. its delivery timeout expired).
+// Discard the partial bytes: with one object per stream they cannot complete, and keeping them
+// would corrupt the parse of anything that followed.
+void MoqSubscriberApp::socketStreamReset(inet::QuicSocket *socket, uint64_t streamId,
+                                         uint64_t applicationErrorCode)
+{
+    auto it = streamBuffers.find((long) streamId);
+    if (it != streamBuffers.end()) {
+        streamBuffers.erase(it);
+        objectsResetByPeer++;
+        EV_INFO << "Relay reset stream " << streamId << " (errorCode=" << applicationErrorCode
+                << "); dropped partial object" << std::endl;
+    }
+}
+
 void MoqSubscriberApp::finish()
 {
+    recordScalar("objectsResetByPeer", objectsResetByPeer);
+
     for (auto& entry : subStats) {
         const std::string& trackAlias = entry.first;
         SubTrackStat& ts = entry.second;

@@ -28,12 +28,16 @@ namespace moqveinssim
 
         timerLimitRuntime = new inet::cMessage("MOQ Relay Timer - Runtime limit");
         timerLimitRuntime->setKind(TIMER_LIMIT_RUNTIME);
+
+        timerTimeoutCheck = new inet::cMessage("MOQ Relay Timer - Delivery timeout sweep");
+        timerTimeoutCheck->setKind(TIMER_TIMEOUT_CHECK);
     }
 
     MoqRelayApp::~MoqRelayApp()
     {
         cancelAndDelete(timerConnect);
         cancelAndDelete(timerLimitRuntime);
+        cancelAndDelete(timerTimeoutCheck);
         // Clear pointer maps before deleteSockets() frees the objects
         publisherSockets.clear();
         publisherSocketsByTrackKey.clear();
@@ -60,6 +64,9 @@ namespace moqveinssim
         else proto = PROTO_QUIC;
         udpFragmentSize = (int) par("udpFragmentSize").intValue();
         quicChunkBytes = par("quicChunkBytes").intValue();
+        timeoutCheckInterval = par("deliveryTimeoutCheckInterval").doubleValue();
+        if (proto == PROTO_QUIC)
+            scheduleAt(omnetpp::simTime() + timeoutCheckInterval, timerTimeoutCheck);
         // Mirror QUIC's own send-queue limit, and keep a handle on the module so the forward path
         // can read each subscriber connection's true queue occupancy before every write.
         if (auto* host = getParentModule()) {
@@ -211,16 +218,14 @@ namespace moqveinssim
             TrackKey tKey{c.trackNamespace, c.trackName};
 
             subscriberSockets[sid] = peerSocket;
-            // Allocate a dedicated relay->subscriber data stream for this (subscriber, track).
-            long dataStream = nextDataStreamId;
-            nextDataStreamId += 4;
-            subscriberStreamIds[{sid, trackAlias}] = dataStream;
+            // Downstream streams are no longer per (subscriber, track): they are allocated per
+            // subgroup as objects arrive (see forwardToSubscriber), because MoQ carries one
+            // subgroup per stream.
             if (subscriberByTrack.find(tKey) == subscriberByTrack.end())
                 subscriberByTrack[tKey] = std::vector<std::string>();
             subscriberByTrack[tKey].push_back(sid);
 
-            EV_INFO << "Subscriber " << sid << " subscribed to " << trackAlias
-                    << " -> data stream " << dataStream << std::endl;
+            EV_INFO << "Subscriber " << sid << " subscribed to " << trackAlias << std::endl;
 
             // Tell the publisher to start sending this track (control frame on its stream 0).
             auto pubIt = publisherSocketsByTrackKey.find(tKey);
@@ -235,7 +240,7 @@ namespace moqveinssim
                 ok.startObjectId = trackIt->second.nextObjectId;
                 auto pkt = new inet::Packet("SUBSCRIBE_OK");
                 pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(MoqFraming::encodeControl(ok)));
-                pubIt->second->send(pkt, CONTROL_STREAM);
+                pubIt->second->send(pkt, CONTROL_STREAM, CONTROL_STREAM_PRIORITY);
             } else {
                 EV_WARN << "SUBSCRIBE for unknown track " << trackAlias << std::endl;
             }
@@ -468,17 +473,37 @@ namespace moqveinssim
     {
         switch (proto) {
         case PROTO_QUIC: {
-            // QUIC: per-(subscriber,track) data stream, with app-level backpressure (the
-            // subscriber's QUIC send queue can signal full). Behavior unchanged.
+            // QUIC: one downstream stream per forwarded object, mirroring the publisher's
+            // group/subgroup-per-object model (draft-14 sections 2.2-2.3). A relay MUST NOT
+            // combine or split object payloads (section 8.5), and giving each object its own
+            // stream is what lets the relay reset a stale object's stream (section 10.4.3)
+            // without corrupting the subscriber's view of every other object on the track.
             auto sockIt = subscriberSockets.find(subscriberId);
-            auto streamIt = subscriberStreamIds.find({subscriberId, f.trackAlias});
-            if (sockIt == subscriberSockets.end() || streamIt == subscriberStreamIds.end()) {
-                EV_WARN << "Subscriber " << subscriberId << " has no socket/stream, skipping" << std::endl;
+            if (sockIt == subscriberSockets.end()) {
+                EV_WARN << "Subscriber " << subscriberId << " has no socket, skipping" << std::endl;
                 return;
             }
+
+            // One downstream stream per subgroup, mirroring the publisher's structure. A relay
+            // MUST NOT combine or split object payloads (section 8.5), and preserving the
+            // subgroup-to-stream mapping is what lets a stale object's stream be reset.
+            DownSubgroup key{subscriberId, f.trackAlias, f.groupId, f.subgroupId};
+
+            // Stream already reset (an earlier object of this subgroup timed out): the rest of
+            // the subgroup went with it.
+            if (resetDownstream.count(key)) {
+                relayShedStale[f.trackAlias]++;
+                return;
+            }
+
+            auto dIt = downstreamStreams.find(key);
+            if (dIt == downstreamStreams.end())
+                dIt = downstreamStreams.emplace(key, (nextDataStreamId += 4) - 4).first;
+
             FwdItem item;
             item.sock = sockIt->second;
-            item.streamId = streamIt->second;
+            item.subgroup = key;
+            item.streamId = dIt->second;
             item.bytes = frameBytes;
             item.payloadLength = f.payloadLength;
             item.priority = f.priority;
@@ -498,21 +523,23 @@ namespace moqveinssim
             st.count++;
             pendingForwardCount++;
 
-            // Finite relay buffer: on overflow drop the oldest object of the lowest-priority track
-            // that has not started transmitting (a partially sent one cannot be dropped).
+            // Finite relay buffer: on overflow drop the oldest object of the lowest-priority
+            // track. A partially sent object can be dropped too, by resetting its stream.
+            // (Like the publisher's, this eviction is a finite-buffer artifact, not a MoQ
+            // mechanism -- MoQ drops only on age, via DELIVERY_TIMEOUT.)
             if (st.count > (long) maxFifoPerStream) {
                 for (auto prioIt = st.buffer.rbegin(); prioIt != st.buffer.rend(); ++prioIt) {
                     auto& queue = prioIt->second;
-                    auto victim = std::find_if(queue.begin(), queue.end(),
-                                               [](const FwdItem& i) { return i.sentOffset == 0; });
-                    if (victim != queue.end()) {
-                        queue.erase(victim);
-                        st.count--;
-                        pendingForwardCount--;
-                        relayDroppedTotal++;
-                        EV_WARN << "Forward queue overflow for socketId=" << sockId << std::endl;
-                        break;
-                    }
+                    if (queue.empty()) continue;
+                    auto victim = queue.begin();
+                    if (victim->sentOffset > 0)
+                        resetDownstreamStream(*victim, MOQ_ERR_SEND_BUFFER_OVERFLOW);
+                    queue.erase(victim);
+                    st.count--;
+                    pendingForwardCount--;
+                    relayDroppedTotal++;
+                    EV_WARN << "Forward queue overflow for socketId=" << sockId << std::endl;
+                    break;
                 }
             }
             emit(relayQueueDepthSignal, pendingForwardCount);
@@ -585,10 +612,19 @@ namespace moqveinssim
         auto begin = item.bytes.begin() + item.sentOffset;
         auto pkt = new inet::Packet("TRACK_OBJ_FWD");
         pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(std::vector<uint8_t>(begin, begin + n)));
-        item.sock->send(pkt, item.streamId);
+        // Carry the object's MoQ priority into QUIC's stream scheduler, so the relay's downstream
+        // send order follows MoQ send order (draft-14 section 7.2) rather than round-robin.
+        // Relays SHOULD prioritize sending Objects per section 8.5.
+        item.sock->send(pkt, item.streamId, quicPriorityOf(item.priority));
         item.sentOffset += n;
 
         if (item.sentOffset < item.bytes.size()) return; // object not fully forwarded yet
+
+        // Fully written to QUIC, but not necessarily delivered: keep it under the delivery timeout
+        // so a stale object queued in the transport can still be reclaimed (draft-14 10.4.3).
+        if (item.timeout > SIMTIME_ZERO)
+            outstanding.push_back({item.subgroup, item.sock, item.streamId, item.trackAlias,
+                                   item.createdAt, item.timeout});
 
         forward_count[item.subscriberId] += 1;
         objectsForwardedTotal++;
@@ -598,6 +634,17 @@ namespace moqveinssim
         if (delay > fwdDelayMax) fwdDelayMax = delay;
         fwdDelayCount++;
         emit(objectForwardedSignal, (long) item.payloadLength);
+    }
+
+    // Reset the downstream stream carrying a subgroup (draft-14 section 10.4.3). Abandons the
+    // object's in-flight bytes toward this subscriber and, with the stream, the rest of that
+    // subgroup: objects already queued are dropped in flushSocket, later ones in forwardToSubscriber.
+    void MoqRelayApp::resetDownstreamStream(const FwdItem &item, int errorCode)
+    {
+        item.sock->resetStream(item.streamId, errorCode);
+        resetDownstream.insert(item.subgroup);
+        downstreamStreams.erase(item.subgroup);
+        downstreamResets++;
     }
 
     // Send queued objects to one subscriber, highest priority (lowest number) first, until QUIC's
@@ -620,12 +667,25 @@ namespace moqveinssim
             if (it == st.buffer.end()) break;
             FwdItem& item = it->second.front();
 
+            // The subgroup's stream was reset by an earlier timeout, so this object went with it.
+            if (resetDownstream.count(item.subgroup)) {
+                relayShedStale[item.trackAlias]++;
+                it->second.pop_front();
+                st.count--;
+                pendingForwardCount--;
+                if (it->second.empty()) st.buffer.erase(it);
+                continue;
+            }
+
             // Partial reliability: if the object is already past its delivery timeout, drop it
-            // instead of forwarding stale data (MoQ OBJECT_DELIVERY_TIMEOUT, true age from
-            // creationTime). Only an object that has not started transmitting may be dropped.
-            bool stale = item.sentOffset == 0 && item.timeout > SIMTIME_ZERO
+            // instead of forwarding stale data (MoQ DELIVERY_TIMEOUT, true age from creationTime).
+            // If it has already started transmitting, section 10.4.3 requires resetting its
+            // subgroup's stream, abandoning its in-flight bytes and the rest of the subgroup.
+            bool stale = item.timeout > SIMTIME_ZERO
                          && (omnetpp::simTime() - item.createdAt) > item.timeout;
             if (stale) {
+                if (item.sentOffset > 0)
+                    resetDownstreamStream(item, MOQ_ERR_DELIVERY_TIMEOUT);
                 relayShedStale[item.trackAlias]++;
             }
             else {
@@ -652,6 +712,8 @@ namespace moqveinssim
     {
         recordScalar("objectsForwardedTotal", objectsForwardedTotal);
         recordScalar("objectsDroppedQueueOverflow", relayDroppedTotal);
+        recordScalar("objectsResetByPublisher", upstreamResets);
+        recordScalar("subgroupStreamResets", downstreamResets); // RESET_STREAM sent downstream
         recordScalar("quicSendRejected", relayRejected); // must be 0: nonzero = silent loss in QUIC
         recordScalar("objectsPendingForwardAtEnd", pendingForwardCount);
         // Objects dropped past their delivery timeout (partial reliability), per track: this is
@@ -671,6 +733,9 @@ namespace moqveinssim
         }
         // Localization: objects the relay received from the publisher, per track. Compare with
         // the publisher's objectsSent (pub->relay loss) and the subscribers' counts (relay->sub).
+        for (auto& rr : relayResetAfterSend) {
+            recordScalar(("track[" + rr.first + "].objectsResetAfterSend").c_str(), rr.second);
+        }
         for (auto& rc : recvFromPubByTrack) {
             recordScalar(("track[" + rc.first + "].objectsReceivedFromPub").c_str(), rc.second);
         }
@@ -698,14 +763,34 @@ namespace moqveinssim
         for (auto& entry : subscriberSockets)
             if (entry.second == closedSocket) goneSubscribers.push_back(entry.first);
         for (const auto& sid : goneSubscribers) {
-            for (auto it = subscriberStreamIds.begin(); it != subscriberStreamIds.end(); )
-                (it->first.first == sid) ? it = subscriberStreamIds.erase(it) : ++it;
+            // Drop this subscriber's per-subgroup downstream stream state.
+            for (auto it = downstreamStreams.begin(); it != downstreamStreams.end(); )
+                (it->first.subscriberId == sid) ? it = downstreamStreams.erase(it) : ++it;
+            for (auto it = resetDownstream.begin(); it != resetDownstream.end(); )
+                (it->subscriberId == sid) ? it = resetDownstream.erase(it) : ++it;
             subscriberSockets.erase(sid);
         }
         emit(relayQueueDepthSignal, pendingForwardCount);
 
         socketMap.removeSocket(closedSocket);
         delete closedSocket;
+    }
+
+    // A peer reset one of its streams. Upstream (publisher->relay) this means the object aged
+    // past its delivery timeout and was abandoned, so the partial bytes we have for that stream
+    // can never form a complete object frame and must be discarded -- otherwise they would be
+    // prepended to whatever arrives next and desynchronise the length-prefix parser.
+    void MoqRelayApp::socketStreamReset(inet::QuicSocket *socket, uint64_t streamId,
+                                        uint64_t applicationErrorCode)
+    {
+        int sockId = socket->getSocketId();
+        auto it = recvBuffers.find({sockId, (long) streamId});
+        if (it != recvBuffers.end()) {
+            recvBuffers.erase(it);
+            upstreamResets++;
+            EV_INFO << "Publisher reset stream " << streamId << " (errorCode="
+                    << applicationErrorCode << "); dropped partial object" << std::endl;
+        }
     }
 
     void MoqRelayApp::socketSendQueueFull(inet::QuicSocket *socket)
@@ -791,6 +876,34 @@ namespace moqveinssim
         EV_DETAIL << "handle timeout of kind " << msg->getKind() << std::endl;
         switch (msg->getKind())
         {
+        case TIMER_TIMEOUT_CHECK:
+            checkOutstandingTimeouts();
+            scheduleAt(omnetpp::simTime() + timeoutCheckInterval, timerTimeoutCheck);
+            break;
+        }
+    }
+
+    // Reset the downstream stream of any object that has outrun its delivery timeout after being
+    // written to QUIC. Mirrors MoqPublisherApp::checkOutstandingTimeouts; see the note there about
+    // objects that may already have arrived.
+    void MoqRelayApp::checkOutstandingTimeouts()
+    {
+        omnetpp::simtime_t now = omnetpp::simTime();
+        for (auto it = outstanding.begin(); it != outstanding.end(); ) {
+            if (resetDownstream.count(it->subgroup)) {   // stream already gone
+                it = outstanding.erase(it);
+                continue;
+            }
+            if (now - it->createdAt > it->timeout) {
+                it->sock->resetStream(it->streamId, MOQ_ERR_DELIVERY_TIMEOUT);
+                resetDownstream.insert(it->subgroup);
+                downstreamStreams.erase(it->subgroup);
+                downstreamResets++;
+                relayResetAfterSend[it->trackAlias]++;
+                it = outstanding.erase(it);
+                continue;
+            }
+            ++it;
         }
     }
 

@@ -43,6 +43,7 @@ private:
 
     enum Timer {
         TIMER_CONNECT = -1,
+        TIMER_TIMEOUT_CHECK = -4,
         TIMER_RESET = -2,
         TIMER_LIMIT_RUNTIME = -3
     };
@@ -53,6 +54,7 @@ private:
     };
     inet::cMessage *timerConnect;
     inet::cMessage *timerLimitRuntime;
+    inet::cMessage *timerTimeoutCheck;   // periodic delivery-timeout sweep over outstanding objects
 
     std::unordered_map<TrackKey, TrackMeta, TrackKeyHash> publishedTracks;
     std::unordered_map<TrackKey, std::vector<std::string>, TrackKeyHash> subscriberByTrack;
@@ -65,7 +67,38 @@ private:
     // Maps (subscriberId, trackAlias) -> streamId for outgoing data forwarding.
     // A subscriber subscribes to each track on its own stream, so forwarding must use the
     // stream that matches the object's track.
-    std::map<std::pair<std::string, std::string>, long> subscriberStreamIds;
+    // Downstream streams follow MoQ's subgroup-per-stream rule (draft-14 section 2.2): one
+    // stream per (subscriber, trackAlias, groupId, subgroupId), carrying every object of that
+    // subgroup. Keeping the subgroup structure end to end is what lets the relay reset a stale
+    // object's stream (section 10.4.3) without corrupting the rest of the track.
+    struct DownSubgroup {
+        std::string subscriberId, trackAlias;
+        long groupId = 0, subgroupId = 0;
+        bool operator<(const DownSubgroup& o) const {
+            return std::tie(subscriberId, trackAlias, groupId, subgroupId)
+                 < std::tie(o.subscriberId, o.trackAlias, o.groupId, o.subgroupId);
+        }
+    };
+    std::map<DownSubgroup, long> downstreamStreams;  // subgroup -> downstream stream id
+    std::set<DownSubgroup> resetDownstream;          // subgroups whose stream we reset
+    long downstreamResets = 0;                       // RESET_STREAM sent to subscribers
+
+    // Objects already written to a subscriber's QUIC socket but not yet known delivered. The
+    // delivery timeout keeps applying to them (draft-14 10.4.3); a stale object still queued in
+    // the transport is what a stream reset reclaims. Without this the relay's timeout only sees
+    // its own forward buffer, and does nothing once the transport buffer is deep.
+    struct OutstandingFwd {
+        DownSubgroup subgroup;
+        inet::QuicSocket* sock = nullptr;
+        long streamId = 0;
+        std::string trackAlias;
+        omnetpp::simtime_t createdAt = 0;
+        omnetpp::simtime_t timeout = 0;
+    };
+    std::deque<OutstandingFwd> outstanding;
+    double timeoutCheckInterval = 0.05;
+    void checkOutstandingTimeouts();
+    std::map<std::string, long> relayResetAfterSend; // per-track objects reset after being written
     inet::L3Address connectAddress;
     unsigned int connectPort;
     bool sendingAllowed = false;
@@ -100,6 +133,7 @@ private:
     // (socketSendQueueFull), objects are buffered here and flushed on drain.
     struct FwdItem {
         inet::QuicSocket* sock = nullptr;
+        DownSubgroup subgroup;
         long streamId = 0;
         std::vector<uint8_t> bytes;
         long payloadLength = 0;
@@ -125,6 +159,7 @@ private:
     std::map<int, SockSendState> sockSend;  // socketId -> downstream send state
     long pendingForwardCount = 0;   // total queued objects (relay queue depth)
     long relayDroppedTotal = 0;     // dropped due to forwarding-queue overflow
+    long upstreamResets = 0;        // objects abandoned by the publisher via RESET_STREAM
     std::map<std::string, long> relayShedStale; // trackAlias -> dropped past the delivery timeout
     long relayRejected = 0;         // DIAGNOSTIC: sends refused by QUIC (silent loss); must stay 0
     static const size_t maxFifoPerStream = 1024;
@@ -143,6 +178,7 @@ private:
     void forwardToSubscriber(const std::string& subscriberId, const MoqObjectFrame& f,
                              const std::vector<uint8_t>& frameBytes, omnetpp::simtime_t firstByteTime);
     void doForwardSendChunk(FwdItem& item);
+    void resetDownstreamStream(const FwdItem& item, int errorCode);
     void flushSocket(int socketId);
 
     // ---- transport selection (additive; QUIC path unchanged) ----
@@ -193,6 +229,10 @@ protected:
     // QUIC refused the write and dropped it. Must never happen now that the relay paces its writes
     // against QUIC's true queue occupancy; a nonzero count means data is being lost silently.
     virtual void socketMsgRejected(inet::QuicSocket *socket) override { relayRejected++; };
+    // The publisher reset an object's stream (its delivery timeout expired upstream): the object
+    // can never complete, so drop whatever partial bytes we buffered for it.
+    virtual void socketStreamReset(inet::QuicSocket *socket, uint64_t streamId,
+                                   uint64_t applicationErrorCode) override;
 
     // ---- TcpSocket::ICallback (used when proto == PROTO_TCP) ----
     virtual void socketDataArrived(inet::TcpSocket *socket, inet::Packet *packet, bool urgent) override;

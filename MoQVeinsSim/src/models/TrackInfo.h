@@ -29,6 +29,15 @@ namespace moqveinssim
         long nextObjectId = 0;
         omnetpp::simtime_t deadline = 0; // per-track latency deadline (0 = no deadline)
         omnetpp::simtime_t deliveryTimeout = 0; // sender-side: drop objects older than this (0 = off)
+
+        // MoQ data model (draft-14 sections 2.2-2.3). objectsPerGroup is how many objects form
+        // one Group, i.e. one random-access point; each Group here carries a single Subgroup,
+        // which maps onto exactly one QUIC stream. The setting trades reset granularity against
+        // stream count: resetting a stale object's stream also abandons the rest of its subgroup,
+        // so a bulk track whose objects are independently usable (a point cloud per object) wants
+        // objectsPerGroup = 1, while a small high-rate track batches many objects per stream.
+        long objectsPerGroup = 1;
+
         omnetpp::cMessage *timer = nullptr;
 
 

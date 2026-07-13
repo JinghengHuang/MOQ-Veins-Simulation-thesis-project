@@ -120,6 +120,11 @@ class MoqSubscriberApp : public inet::ApplicationBase,
         virtual void socketSendQueueFull(inet::QuicSocket *socket) override;
         virtual void socketSendQueueDrain(inet::QuicSocket *socket) override;
         virtual void socketMsgRejected(inet::QuicSocket *socket) override { };
+        // The relay reset an object's stream (delivery timeout): the object will never complete,
+        // so discard the partial bytes instead of leaving them to corrupt the next parse.
+        virtual void socketStreamReset(inet::QuicSocket *socket, uint64_t streamId,
+                                       uint64_t applicationErrorCode) override;
+        long objectsResetByPeer = 0;
 
         // ---- TcpSocket::ICallback (used when proto == PROTO_TCP) ----
         virtual void socketDataArrived(inet::TcpSocket *socket, inet::Packet *packet, bool urgent) override;
