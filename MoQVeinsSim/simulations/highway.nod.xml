@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Straight 3 km highway corridor. Junctions are plain (no traffic lights) so vehicles
+     hold free-flow speed for the whole run; the gNodeBs are placed over A-B and B-C so a
+     vehicle traversing the corridor performs exactly one handover mid-run. -->
+<nodes>
+    <node id="A" x="0"    y="0" type="priority"/>
+    <node id="B" x="1500" y="0" type="priority"/>
+    <node id="C" x="3000" y="0" type="priority"/>
+</nodes>

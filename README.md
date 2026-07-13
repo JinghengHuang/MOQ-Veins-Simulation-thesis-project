@@ -50,8 +50,23 @@ then run simulation from OMNET++ within project MoQVeinsSim (`./MoQVeinsSim/simu
 
 ## Module Configurations
 
-- For more precise simulation on signal path loss, uses two ray inference model as suggested in the [document](https://veins.car2x.org/documentation/modules/#tworay).
-- Uses simple obstacle shadowing model to simulate signal losses caused by building obstruction, as suggested in the [document](https://veins.car2x.org/documentation/modules/#obstacles).
+All application traffic travels over 5G NR via Simu5G; Veins is used **only** as the mobility
+feeder (SUMO via TraCI), so the Veins 802.11p PHY -- and with it the two-ray interference and
+obstacle shadowing models -- is not on the data path and does not apply here.
+
+Propagation is modelled by Simu5G's `NrChannelModel_3GPP38_901` (3GPP TR 38.901), which
+provides LOS/NLOS path loss, log-normal shadowing and Jakes fading. It is declared explicitly
+in `omnetpp.ini` rather than left to defaults.
+
+## Scenarios
+
+- **Urban** (default): 3x3 SUMO grid, 200m edges, 50 km/h. Configs `MOQ`, `MOQ_TCP`,
+  `MOQ_UDP`, `MOQ_SW`, `MOQ_Partial`.
+- **Highway**: straight 3 km, 3-lane corridor at 120 km/h, with the two gNodeBs spaced along
+  it so a traversing vehicle hands over once mid-run. Same configs with an `_HW` suffix.
+
+Both scenarios run 8 vehicles. `MOQ_Partial_MultiPub` scales the offered load by promoting
+cars 0-2 to publishers.
 
 ## Network simulation
 

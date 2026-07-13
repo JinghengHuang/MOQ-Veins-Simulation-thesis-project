@@ -1,0 +1,16 @@
+<configuration>
+  <input>
+    <net-file value="highway.net.xml"/>
+    <route-files value="highway.rou.xml"/>
+  </input>
+  <time>
+    <!-- The last vehicle departs at 14 s and needs ~90 s to cover the 3 km corridor at
+         120 km/h, so the fleet has cleared the road by ~105 s. -->
+    <begin value="0"/>
+    <end value="150"/>
+    <step-length value="0.1"/>
+  </time>
+  <gui_only>
+    <gui-settings-file value="gui-settings.xml"/>
+  </gui_only>
+</configuration>

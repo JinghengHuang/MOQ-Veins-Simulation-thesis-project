@@ -1,0 +1,3 @@
+RQ1: How can we design a system that integrates MOQ with V2X communication?
+RQ2: Does MOQ perform better than MQTT, both over QUIC and over TCP, and general TCP and UDP in terms of data throughput and latency?
+RQ3: What V2X use cases can be boosted by the application of MOQ, in terms of latency and data throughput?

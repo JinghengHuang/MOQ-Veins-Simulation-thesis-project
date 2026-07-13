@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 3 lanes per direction at 33.33 m/s (120 km/h). -->
+<edges>
+    <edge id="AB" from="A" to="B" numLanes="3" speed="33.33"/>
+    <edge id="BC" from="B" to="C" numLanes="3" speed="33.33"/>
+    <edge id="CB" from="C" to="B" numLanes="3" speed="33.33"/>
+    <edge id="BA" from="B" to="A" numLanes="3" speed="33.33"/>
+</edges>

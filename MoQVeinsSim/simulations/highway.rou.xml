@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 8 vehicles traversing the full 3 km corridor west-to-east, matching the urban grid
+     scenario's vehicle count so the two scenarios differ only in mobility/topology.
+     Vehicle "0" departs first and becomes car[0], the MoQ publisher; the rest subscribe.
+     Departures are 2 s apart so the fleet stays within one cell's coverage as a platoon. -->
+<routes>
+    <vType id="car" accel="2.6" decel="4.5" sigma="0.5" length="4.5" minGap="2.5"
+           maxSpeed="33.33" guiShape="passenger"/>
+
+    <route id="eastbound" edges="AB BC"/>
+
+    <vehicle id="0" type="car" route="eastbound" depart="0"  departSpeed="max" departLane="best"/>
+    <vehicle id="1" type="car" route="eastbound" depart="2"  departSpeed="max" departLane="best"/>
+    <vehicle id="2" type="car" route="eastbound" depart="4"  departSpeed="max" departLane="best"/>
+    <vehicle id="3" type="car" route="eastbound" depart="6"  departSpeed="max" departLane="best"/>
+    <vehicle id="4" type="car" route="eastbound" depart="8"  departSpeed="max" departLane="best"/>
+    <vehicle id="5" type="car" route="eastbound" depart="10" departSpeed="max" departLane="best"/>
+    <vehicle id="6" type="car" route="eastbound" depart="12" departSpeed="max" departLane="best"/>
+    <vehicle id="7" type="car" route="eastbound" depart="14" departSpeed="max" departLane="best"/>
+</routes>
