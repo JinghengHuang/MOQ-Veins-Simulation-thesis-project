@@ -1,5 +1,14 @@
 # Should PCloud be one 300 KB object, or a group of segments?
 
+> **SUPERSEDED IN PART — read this first.** The numbers below were measured before two later
+> fixes: (a) the MoQ publisher was silently discarding writes once QUIC's send queue overran
+> (`quicSendRejected = 3468`), which flattered its latency, and (b) PCloud was still one 300 KB
+> object in some runs. The *direction* of every conclusion here still holds and was re-confirmed,
+> but the absolute figures should be taken from `mqtt-vs-moq.md`, which is the current,
+> silent-loss-gated comparison. Specifically, MoQ at a 128 kB window measures 37 ms / 0.7% miss
+> (not 30 ms / 0.0%), and at the default window ~1030 ms / 77% miss.
+
+
 ## The question
 
 Our bulk track models a LiDAR point cloud as **one 300 KB MoQ Object**. With
