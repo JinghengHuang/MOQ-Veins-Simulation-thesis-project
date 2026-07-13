@@ -121,39 +121,45 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
             case SUB_SUCCESS:
                 if (it != tracks.end()) {
                     track = &it->second;
-                    // Send the object as a MoQ-style length-prefixed byte frame (header +
-                    // payload), self-delimiting so the receiver frames by length.
-                    MoqObjectFrame f;
-                    f.trackId = track->trackId;
-                    f.trackAlias = track->trackAlias;
-                    // Group the object per the track's data model (draft-14 sections 2.2-2.3):
-                    // every objectsPerGroup consecutive objects form one Group (one random-access
-                    // point), each Group carrying a single Subgroup that owns one stream.
-                    // objectId stays a monotonic per-track sequence number, which is what the
-                    // receivers use to detect gaps.
+                    // One Group per sendInterval, holding objectsPerGroup Objects (draft-14
+                    // 2.2-2.3). A Group is a sensor frame: a LiDAR sweep is emitted as a burst of
+                    // independently usable segments rather than one monolithic object, which is
+                    // what real cooperative-perception systems do (EMP uploads 30-38KB chunks so
+                    // the edge can use partial frames; ETSI TS 103 324 segments a CPM into
+                    // independently interpretable parts). The Group's segments share one subgroup
+                    // stream, so a delivery-timeout reset abandons the tail of a stale frame while
+                    // the segments already delivered stay usable.
                     long perGroup = track->objectsPerGroup > 0 ? track->objectsPerGroup : 1;
-                    f.groupId = track->nextObjectId / perGroup;
-                    f.subgroupId = 0; // one subgroup per group: no layered//temporal structure here
-                    f.objectId = track->nextObjectId;
-                    f.priority = track->priority;
-                    f.payloadLength = track->packetSize;
-                    f.creationTime = omnetpp::simTime();
-                    track->nextObjectId++;
-                    sendObjectFrame(f, tid);
-                    EV_INFO << "Send track object data: " << track->trackAlias.c_str() << std::endl;
-
-                    // Record one data object offered to the network for this track. What actually
-                    // reaches QUIC is counted separately in doSendQuicChunk: the two differ by the
-                    // objects shed past their delivery timeout or evicted on buffer overflow.
+                    long groupId = track->nextObjectId / perGroup;
                     PubTrackStat& ps = pubStats[track->trackId];
-                    ps.objectsOffered++;
-                    ps.bytesOffered += track->packetSize;
+
+                    for (long i = 0; i < perGroup; i++) {
+                        MoqObjectFrame f;
+                        f.trackId = track->trackId;
+                        f.trackAlias = track->trackAlias;
+                        f.groupId = groupId;
+                        f.subgroupId = 0; // one subgroup per group: no layered structure here
+                        f.objectId = track->nextObjectId;
+                        f.priority = track->priority;
+                        f.payloadLength = track->packetSize;
+                        f.creationTime = omnetpp::simTime();
+                        track->nextObjectId++;
+                        sendObjectFrame(f, tid);
+
+                        // Objects offered to the network. What reaches QUIC is counted separately
+                        // in doSendQuicChunk: the two differ by objects shed past their delivery
+                        // timeout or evicted on buffer overflow.
+                        ps.objectsOffered++;
+                        ps.bytesOffered += track->packetSize;
+                        emit(objectSentSignal, (long) track->packetSize);
+                    }
+                    EV_INFO << "Sent group " << groupId << " (" << perGroup << " objects) of "
+                            << track->trackAlias.c_str() << std::endl;
+
                     if (ps.firstSendTime < SIMTIME_ZERO) ps.firstSendTime = omnetpp::simTime();
                     ps.lastSendTime = omnetpp::simTime();
-                    emit(objectSentSignal, (long) track->packetSize);
 
-                    // Arrange sending another packet of the same event
-                    sendTrackData(tid);
+                    sendTrackData(tid); // schedule the next group
                 }
                 break;
             case SUB_ERROR:
