@@ -655,12 +655,17 @@ namespace moqveinssim
         if (stIt == sockSend.end()) return;
         SockSendState& st = stIt->second;
 
-        // Bytes handed to this socket during the current event; QUIC has not enqueued them yet, so
-        // the queue length read back does not include them (see MoqPublisherApp::flushSendBuffer).
-        long inFlightToQuic = 0;
+        // Bytes written to this socket during the current event. QUIC has not enqueued them yet, so
+        // the queue length it reports does not include them; and flushSocket is called once per
+        // object, so the tally must be per event, not per call (see MoqPublisherApp).
+        if (quicWriteEvent != omnetpp::simTime()) {
+            quicWriteEvent = omnetpp::simTime();
+            quicBytesThisEvent.clear();
+        }
+        long& bytesThisEvent = quicBytesThisEvent[socketId];
 
         while (!st.blocked && st.count > 0) {
-            if (quicSendQueueLength(socketId) + inFlightToQuic >= quicSendQueueLimit) break;
+            if (quicSendQueueLength(socketId) + bytesThisEvent >= quicSendQueueLimit) break;
 
             auto it = st.buffer.begin();
             while (it != st.buffer.end() && it->second.empty()) it = st.buffer.erase(it);
@@ -691,7 +696,7 @@ namespace moqveinssim
             else {
                 size_t before = item.sentOffset;
                 doForwardSendChunk(item);
-                inFlightToQuic += (long) (item.sentOffset - before);
+                bytesThisEvent += (long) (item.sentOffset - before);
                 // Do not set st.blocked from this estimate; see MoqPublisherApp::flushSendBuffer.
                 // It is cleared only by the drain indication, which never comes if we stay below
                 // the low-water mark, so setting it here deadlocks the relay's send path.

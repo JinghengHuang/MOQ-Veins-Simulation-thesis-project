@@ -119,6 +119,12 @@ class MoqPublisherApp : public inet::ApplicationBase,
         // Chunking keeps the backlog in the priority-ordered buffer below, where it can be reordered
         // and shed, instead of stranding it in the transport.
         long quicChunkBytes = 16L * 1024;
+        // Bytes handed to QUIC during the current event. flushSendBuffer runs once per object, and
+        // a group burst emits several in one event, so this must persist across those calls: QUIC
+        // has not processed any of them yet, so its reported queue length is still the pre-event
+        // value and would otherwise let each call overshoot the limit afresh.
+        omnetpp::simtime_t quicWriteEvent = -1;
+        long quicBytesThisEvent = 0;
         std::map<long, std::deque<Pending>> sendBuffer;   // priority -> FIFO (oldest at front)
         long sendBufferCount = 0;
         size_t sendBufferLimit = 2000;

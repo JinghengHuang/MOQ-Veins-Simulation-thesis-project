@@ -478,6 +478,14 @@ void MoqPublisherApp::doSendQuicChunk(Pending& p) {
 // reset its stream. That is harmless: the receiver has already parsed and recorded it, and the
 // reset only discards reassembly data it has not yet consumed.
 void MoqPublisherApp::checkOutstandingTimeouts() {
+    // An empty send queue means every byte we handed to QUIC has been acknowledged, so nothing
+    // outstanding is still in flight and none of it needs resetting. Without this the list only
+    // ever grows and every object is eventually reset on age, long after it was delivered.
+    if (quicSendQueueLength() == 0) {
+        outstanding.clear();
+        return;
+    }
+
     omnetpp::simtime_t now = omnetpp::simTime();
     for (auto it = outstanding.begin(); it != outstanding.end(); ) {
         if (resetSubgroups.count(it->subgroup)) {   // stream already gone
@@ -543,15 +551,18 @@ void MoqPublisherApp::enqueuePending(Pending&& p) {
 void MoqPublisherApp::flushSendBuffer() {
     // Stop as soon as the estimated occupancy reaches the limit (predicts QUIC's synchronous
     // "full"), so the next object is buffered rather than rejected. !quicBlocked is a safety net.
-    // Bytes handed to the socket during this event. socket.send() is a message send: QUIC only
-    // enqueues the data when it processes that message, in a later event, so the queue length read
-    // back here does not yet account for these writes. Carrying them explicitly makes the occupancy
-    // exact within the event, which is what keeps us from overfilling QUIC and having it reject --
-    // and silently drop -- writes from the middle of an object.
-    long inFlightToQuic = 0;
+    // QUIC only enqueues a write when it processes the message, in a later event, so the queue
+    // length it reports here does not yet include anything written during this event. Track that
+    // ourselves, keyed on the event: flushSendBuffer is called once per object, and a group burst
+    // produces several objects in one event, so a per-call counter would let each call overshoot
+    // the limit again and QUIC would silently reject (and discard) the excess.
+    if (quicWriteEvent != omnetpp::simTime()) {
+        quicWriteEvent = omnetpp::simTime();
+        quicBytesThisEvent = 0;
+    }
 
     while (!quicBlocked && sendBufferCount > 0) {
-        if (quicSendQueueLength() + inFlightToQuic >= quicSendQueueLimit) break;
+        if (quicSendQueueLength() + quicBytesThisEvent >= quicSendQueueLimit) break;
 
         auto it = sendBuffer.begin();
         while (it != sendBuffer.end() && it->second.empty()) it = sendBuffer.erase(it);
@@ -584,7 +595,7 @@ void MoqPublisherApp::flushSendBuffer() {
         else {
             size_t before = p.sentOffset;
             doSendQuicChunk(p);
-            inFlightToQuic += (long) (p.sentOffset - before);
+            quicBytesThisEvent += (long) (p.sentOffset - before);
             // Do NOT set quicBlocked from this estimate. It is cleared only by QUIC's drain
             // indication, and QUIC only fires that once its queue has first risen above the
             // low-water mark. Pacing ourselves below that mark therefore blocks us forever.

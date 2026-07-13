@@ -166,6 +166,11 @@ private:
     int nextDataStreamId = 1;       // relay->subscriber data stream ids (1,5,9,...)
     long quicSendQueueLimit = 64L * 1024 * 1024;
     long quicChunkBytes = 16L * 1024;
+    // Bytes written to each subscriber socket during the current event. flushSocket runs once per
+    // forwarded object, and a group burst forwards several in one event, so this must persist
+    // across those calls or each one re-overshoots QUIC's limit (see MoqPublisherApp).
+    omnetpp::simtime_t quicWriteEvent = -1;
+    std::map<int, long> quicBytesThisEvent;   // socketId -> bytes written this event
     // QUIC's true send-queue occupancy per subscriber socket, read from the transport before every
     // write. See MoqPublisherApp: an app-side estimate cannot work, because bytes leave the queue on
     // ACK, which the app never observes.
