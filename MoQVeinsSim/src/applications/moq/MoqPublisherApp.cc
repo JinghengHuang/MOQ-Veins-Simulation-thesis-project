@@ -60,6 +60,7 @@ void MoqPublisherApp::handleTimeout(omnetpp::cMessage *msg)
             break;
         case TIMER_TIMEOUT_CHECK:
             checkOutstandingTimeouts();
+            flushSendBuffer(); // liveness: never depend solely on the drain indication
             scheduleAt(omnetpp::simTime() + timeoutCheckInterval, timerTimeoutCheck);
             break;
         case TIMER_LIMIT_RUNTIME:
@@ -578,10 +579,10 @@ void MoqPublisherApp::flushSendBuffer() {
             size_t before = p.sentOffset;
             doSendQuicChunk(p);
             inFlightToQuic += (long) (p.sentOffset - before);
-            // Mirror QUIC's admission hysteresis: it stops accepting once the queue reaches
-            // sendQueueLimit and resumes only at the low-water mark, and tells us asynchronously.
-            // Going quiet at the same point it does keeps every write inside its acceptance window.
-            if (quicSendQueueLength() + inFlightToQuic >= quicSendQueueLimit) quicBlocked = true;
+            // Do NOT set quicBlocked from this estimate. It is cleared only by QUIC's drain
+            // indication, and QUIC only fires that once its queue has first risen above the
+            // low-water mark. Pacing ourselves below that mark therefore blocks us forever.
+            // The loop's occupancy check above is what keeps writes inside QUIC's window.
         }
 
         if (stale || p.sentOffset == p.bytes.size()) { // object finished with, one way or the other

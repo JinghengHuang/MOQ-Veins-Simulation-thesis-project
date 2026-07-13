@@ -692,10 +692,9 @@ namespace moqveinssim
                 size_t before = item.sentOffset;
                 doForwardSendChunk(item);
                 inFlightToQuic += (long) (item.sentOffset - before);
-                // Mirror QUIC's admission hysteresis (see MoqPublisherApp): it stops accepting at
-                // sendQueueLimit and resumes only at the low-water mark, so a write in between is
-                // silently dropped and would desync the subscriber's parser.
-                if (quicSendQueueLength(socketId) + inFlightToQuic >= quicSendQueueLimit) st.blocked = true;
+                // Do not set st.blocked from this estimate; see MoqPublisherApp::flushSendBuffer.
+                // It is cleared only by the drain indication, which never comes if we stay below
+                // the low-water mark, so setting it here deadlocks the relay's send path.
             }
 
             if (stale || item.sentOffset == item.bytes.size()) {
@@ -878,6 +877,7 @@ namespace moqveinssim
         {
         case TIMER_TIMEOUT_CHECK:
             checkOutstandingTimeouts();
+            for (auto& e : sockSend) flushSocket(e.first); // liveness, as in the publisher
             scheduleAt(omnetpp::simTime() + timeoutCheckInterval, timerTimeoutCheck);
             break;
         }
