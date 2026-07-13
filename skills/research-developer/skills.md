@@ -30,4 +30,11 @@ If you have questions or need the user to make a decision, ask the user.
 
 Always present a plan before editing.
 
-Make a git commit per feature change/bug fix, and briefly document the 
+Make a git commit per feature change/bug fix, and briefly document the changes in the commit message, no need for a full paragraph, just one line with one or two sentences.
+
+If there are any research questions asked by the user, search for literatures using websites like Google Scholar and find papers that supports the conclusion. State where in the paper that backs the conclusion and provide citation in bibtex in the end.
+
+## Code standards
+Use comments sparsingly, no need to comment with entire paragraph and don't comment everywhere, only the important parts, but do leave necessary comments.
+
+Follow the SOLID and DRY principle, keep the implementation simple and readable, use sensible name for variables, classes, etc., avoid tricks, magic numbers and hacks in the implementations.
