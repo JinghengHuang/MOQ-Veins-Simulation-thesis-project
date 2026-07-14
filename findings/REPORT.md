@@ -178,6 +178,8 @@ overload.** Two distinct contributions, and they should be reported as such.
 
 ## 5. Threats to validity
 
+*(Full list of resolved issues and project limits: [`ISSUES-AND-LIMITS.md`](ISSUES-AND-LIMITS.md).)*
+
 - **Scenario dependence.** The headline deadline result holds in urban and fails on the highway.
   Both are reported; neither generalises to arbitrary V2X deployments.
 - **One workload shape.** One publisher, two tracks. `MOQ_Partial_MultiPub` (3 publishers) is

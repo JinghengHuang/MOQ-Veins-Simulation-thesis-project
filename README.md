@@ -155,7 +155,9 @@ Why the upstream releases will not do:
 - The window sweep is single-seed.
 - `MOQ_Partial_MultiPub` is implemented but unmeasured.
 
-See §5 of [`findings/REPORT.md`](findings/REPORT.md) for the full threats-to-validity discussion.
+Full list of every issue resolved and every limit of the project:
+[`findings/ISSUES-AND-LIMITS.md`](findings/ISSUES-AND-LIMITS.md). Threats to validity are also summarised in
+§5 of [`findings/REPORT.md`](findings/REPORT.md).
 
 ## Repository layout
 
@@ -165,6 +167,6 @@ MoQVeinsSim/src/applications/mqtt/   MQTT v5.0 publisher, broker, subscriber
 MoQVeinsSim/src/models/              framing, track config, shared subscriber statistics
 MoQVeinsSim/simulations/             omnetpp.ini, SUMO scenarios, analysis scripts
 scripts/                             run-all.sh, run-comparison.sh, aggregate_seeds.py
-findings/                            REPORT.md (start here) and the supporting studies
+findings/                            REPORT.md (start here), ISSUES-AND-LIMITS.md, supporting studies
 design/                              the MoQ and MQTT specifications used as constraints
 ```
