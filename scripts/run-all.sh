@@ -62,9 +62,16 @@ for cfg in MOQ_Partial_Window MOQ_SW_Window; do
 done
 
 echo
-echo "=== 4. verification: silent-loss gate ==="
+echo "=== 4. verification ==="
 bad=0
 total=0
+# (a) aborted runs. A simulation that dies early still writes a .sca, and its partial results look
+#     exactly like a legitimate "delivered nothing" outcome. run-comparison.sh renames those to
+#     .sca.aborted; anything left here that did not reach the time limit is also a failure.
+aborted=$(find "$OUT" -name '*.sca.aborted' | wc -l)
+[ "$aborted" -eq 0 ] || { echo "  $aborted run(s) ABORTED early:"; find "$OUT" -name '*.sca.aborted'; bad=$((bad + aborted)); }
+
+# (b) silent loss.
 while IFS= read -r sca; do
     total=$((total + 1))
     rej=$(grep -h quicSendRejected "$sca" 2>/dev/null | awk '{t+=$NF} END{print t+0}')
@@ -73,8 +80,8 @@ while IFS= read -r sca; do
         bad=$((bad + 1))
     fi
 done < <(find "$OUT" -name '*.sca')
-echo "  checked $total runs, $bad failed the gate"
-[ "$bad" -eq 0 ] || { echo "REFUSING to report: some runs discarded load."; exit 1; }
+echo "  checked $total completed runs, $bad failure(s)"
+[ "$bad" -eq 0 ] || { echo "REFUSING to report: runs aborted or discarded load."; exit 1; }
 
 echo
 echo "=== 5. results ==="

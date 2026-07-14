@@ -106,7 +106,9 @@ for seed_dir in sorted(glob.glob(os.path.join(root, "seed*"))):
             for k, v in metrics.items():
                 data[cfg][track][k].append(v)
 
-print(f"seeds: {len(seeds)}\n")
+print(f"seed dirs: {len(seeds)}")
+print("n = completed runs contributing to each row. Runs that aborted early are excluded by")
+print("run-comparison.sh (renamed .sca.aborted) and must be reported, not silently dropped.\n")
 for track in ("BBox", "PCloud"):
     print(f"===== {track} =====")
     print(f"{'config':>17} | {'latency (ms)':>18} | {'deadline miss':>17} | "

@@ -5,11 +5,15 @@
 # mid-run, so a single run per config cannot support a claim. Each config is run once per seed-set;
 # aggregate with scripts/aggregate_seeds.py, which reports means with 95% CIs.
 #
-# Usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway]
+# Runs are independent, so they execute in parallel (each opp_run gets its own SUMO instance from
+# veins_launchd). PARALLEL defaults to half the cores, leaving headroom for those SUMO processes.
+#
+# Usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway] [parallel]
 
-OUT=${1:?usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway]}
+OUT=${1:?usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway] [parallel]}
 SEEDS=${2:-5}
 SCENARIO=${3:-urban}
+PARALLEL=${4:-$(( $(nproc) / 2 ))}
 
 case "$SCENARIO" in
     urban)   SUF="" ;;
@@ -26,17 +30,16 @@ S=/home/jhuang/thesiswork/simu5g-git
 NED="$M/src:.:$I/src:$V/src/veins:$V/subprojects/veins_inet/src/veins_inet:$S/src"
 LIBS="-l $I/src/INET -l $V/src/veins -l $V/subprojects/veins_inet/src/veins_inet -l $S/src/simu5g -l $M/src/MoQVeinsSim"
 
-# The bounded-window operating point identified by the window sweep. It is not a separate ini
-# config, so it is applied as an override.
+# The bounded-window operating point identified by the window sweep. Not a separate ini config.
 TUNED="--**.quic.initialMaxData=128kB --**.quic.initialMaxStreamData=128kB --*.car[*].quic.sendQueueLimit=16384B"
+
 
 cd "$M/simulations" || exit 1
 mkdir -p "$OUT"
 
-run() {  # run <label> <config> [extra opp_run args...]
-    label=$1
-    cfg=$2
-    shift 2
+# One (seed, config) pair.
+run_one() {
+    s=$1; label=$2; cfg=$3; shift 3
     dir="$OUT/seed$s"
     mkdir -p "$dir"
 
@@ -50,20 +53,37 @@ run() {  # run <label> <config> [extra opp_run args...]
     done
 
     rej=$(grep -h quicSendRejected "$dir/$label.sca" 2>/dev/null | awk '{t+=$NF} END{print t+0}')
-    status=$(grep -oE 'limit reached|<!> Error: [A-Za-z_]+' "$OUT/${label}_s$s.log" | head -1)
-    # rejected must be 0: INET's QUIC silently discards writes once its send queue is full, so a
-    # nonzero count means the run threw load away and its numbers are meaningless.
-    echo "[$SCENARIO] seed=$s $label -> ${status:-NO RESULT} rejected=${rej:-?}"
+    # Two independent checks, both must pass:
+    #  - the run reached the time limit. A run that aborts early still writes a .sca, and its partial
+    #    results are indistinguishable from a real "delivered nothing" outcome.
+    #  - rejected == 0. INET's QUIC silently discards writes once its send queue is full, so a
+    #    nonzero count means the run threw load away and its numbers are meaningless.
+    if grep -q 'limit reached' "$OUT/${label}_s$s.log"; then
+        status=OK
+    else
+        status="ABORTED: $(grep -oE '<!> Error:.*' "$OUT/${label}_s$s.log" | head -1 | cut -c1-60)"
+        mv "$dir/$label.sca" "$dir/$label.sca.aborted" 2>/dev/null   # keep it out of the analysis
+    fi
+    echo "[$SCENARIO] seed=$s $label -> $status rejected=${rej:-?}"
 }
 
+# Runs are independent, so fan them out, capped at PARALLEL concurrent simulations.
+running=0
 for s in $(seq 0 $((SEEDS - 1))); do
-    run MOQ_QUIC        "MOQ$SUF"
-    run MOQ_TCP         "MOQ_TCP$SUF"
-    run MOQ_UDP         "MOQ_UDP$SUF"
-    run MQTT_TCP        "MQTT_TCP$SUF"
-    run MQTT_QUIC       "MQTT_QUIC$SUF"
-    run MOQ_Partial_128 "MOQ_Partial$SUF" $TUNED
-    run MOQ_SW_128      "MOQ_SW$SUF"      $TUNED
+    for spec in "MOQ_QUIC MOQ$SUF" "MOQ_TCP MOQ_TCP$SUF" "MOQ_UDP MOQ_UDP$SUF" \
+                "MQTT_TCP MQTT_TCP$SUF" "MQTT_QUIC MQTT_QUIC$SUF"; do
+        set -- $spec
+        run_one "$s" "$1" "$2" &
+        running=$((running + 1))
+        [ "$running" -ge "$PARALLEL" ] && { wait -n; running=$((running - 1)); }
+    done
+    for spec in "MOQ_Partial_128 MOQ_Partial$SUF" "MOQ_SW_128 MOQ_SW$SUF"; do
+        set -- $spec
+        run_one "$s" "$1" "$2" $TUNED &
+        running=$((running + 1))
+        [ "$running" -ge "$PARALLEL" ] && { wait -n; running=$((running - 1)); }
+    done
 done
+wait
 
 echo COMPARISON_DONE
