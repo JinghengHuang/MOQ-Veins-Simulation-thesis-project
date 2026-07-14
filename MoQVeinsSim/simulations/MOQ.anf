@@ -63,7 +63,7 @@ def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
     x = np.arange(len(cfgs))
     width = 0.38
 
-    plt.figure(figsize=(11, 5))
+    plt.gcf().set_size_inches(11, 5)
     for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
         d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
         vals = d["mean"] * scale
@@ -154,7 +154,7 @@ def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
     x = np.arange(len(cfgs))
     width = 0.38
 
-    plt.figure(figsize=(11, 5))
+    plt.gcf().set_size_inches(11, 5)
     for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
         d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
         vals = d["mean"] * scale
@@ -242,7 +242,7 @@ def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
     x = np.arange(len(cfgs))
     width = 0.38
 
-    plt.figure(figsize=(11, 5))
+    plt.gcf().set_size_inches(11, 5)
     for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
         d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
         vals = d["mean"] * scale
@@ -329,7 +329,7 @@ def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
     x = np.arange(len(cfgs))
     width = 0.38
 
-    plt.figure(figsize=(11, 5))
+    plt.gcf().set_size_inches(11, 5)
     for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
         d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
         vals = d["mean"] * scale
@@ -417,7 +417,7 @@ def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
     x = np.arange(len(cfgs))
     width = 0.38
 
-    plt.figure(figsize=(11, 5))
+    plt.gcf().set_size_inches(11, 5)
     for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
         d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
         vals = d["mean"] * scale
@@ -453,7 +453,7 @@ df["window"] = df["win"].map(to_bytes) / 1e3   # kB
 per_run = df.groupby(["configname", "window", "runID"])["value"].mean().reset_index()
 agg = per_run.groupby(["configname", "window"])["value"].mean().reset_index()
 
-plt.figure(figsize=(8, 5))
+plt.gcf().set_size_inches(8, 5)
 for cfg, label, style, colour in [
         ("MOQ_Partial_Window", "Partial reliability (delivery timeout)", "-",  "#2b6cb0"),
         ("MOQ_SW_Window",      "Reliable (no shedding)",                 "--", "#c05621")]:
@@ -532,7 +532,7 @@ def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
     x = np.arange(len(cfgs))
     width = 0.38
 
-    plt.figure(figsize=(11, 5))
+    plt.gcf().set_size_inches(11, 5)
     for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
         d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
         vals = d["mean"] * scale
@@ -568,7 +568,7 @@ df["window"] = df["win"].map(to_bytes) / 1e3   # kB
 per_run = df.groupby(["configname", "window", "runID"])["value"].mean().reset_index()
 agg = per_run.groupby(["configname", "window"])["value"].mean().reset_index()
 
-plt.figure(figsize=(8, 5))
+plt.gcf().set_size_inches(8, 5)
 for cfg, label, style, colour in [
         ("MOQ_Partial_Window", "Partial reliability (delivery timeout)", "-",  "#2b6cb0"),
         ("MOQ_SW_Window",      "Reliable (no shedding)",                 "--", "#c05621")]:
@@ -644,7 +644,7 @@ def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
     x = np.arange(len(cfgs))
     width = 0.38
 
-    plt.figure(figsize=(11, 5))
+    plt.gcf().set_size_inches(11, 5)
     for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
         d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
         vals = d["mean"] * scale
@@ -674,7 +674,7 @@ if vec.empty:
 vec = vec[~vec["configname"].str.endswith("_HW")]
 vec["config"] = vec["configname"].replace({"MOQ": "MOQ_QUIC"})
 
-plt.figure(figsize=(8, 5))
+plt.gcf().set_size_inches(8, 5)
 rows = []
 for cfg in ORDER:
     d = vec[vec["config"] == cfg]
