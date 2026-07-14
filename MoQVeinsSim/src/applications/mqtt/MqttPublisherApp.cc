@@ -200,8 +200,20 @@ void MqttPublisherApp::socketDataArrived(inet::TcpSocket *, inet::Packet *packet
     delete packet;
 }
 
-void MqttPublisherApp::handleStopOperation(inet::LifecycleOperation *) { cancelEvent(timerConnect); }
-void MqttPublisherApp::handleCrashOperation(inet::LifecycleOperation *) { cancelEvent(timerConnect); }
+// Stop publishing on shutdown. Cancelling only the connect timer left the per-topic publish timers
+// and the flush timer armed, so a burst could still fire at a socket that was already closing and
+// QUIC would reject (and silently discard) it. Vehicles leave the road mid-run -- on the highway
+// the publisher departs at ~90 s -- so this path is taken on every run.
+void MqttPublisherApp::stopPublishing() {
+    connected = false;
+    cancelEvent(timerConnect);
+    if (timerFlush != nullptr) cancelEvent(timerFlush);
+    for (auto& t : topics) cancelEvent(t.second.timer);
+    sendQueue.clear();
+}
+
+void MqttPublisherApp::handleStopOperation(inet::LifecycleOperation *) { stopPublishing(); }
+void MqttPublisherApp::handleCrashOperation(inet::LifecycleOperation *) { stopPublishing(); }
 
 void MqttPublisherApp::finish() {
     recordScalar("pubacksReceived", pubacksReceived);

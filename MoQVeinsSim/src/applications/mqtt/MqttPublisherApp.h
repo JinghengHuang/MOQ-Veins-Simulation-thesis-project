@@ -85,6 +85,7 @@ private:
     size_t sendQueueLimitMsgs = 0;
 
     void flushSendQueue();
+    void stopPublishing();
 
     static const long CONTROL_STREAM = 0;    // MQTT over QUIC: one ordered stream, as over TCP
 
