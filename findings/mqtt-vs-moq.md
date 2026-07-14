@@ -45,16 +45,24 @@ published before they existed. **~62% is full delivery, not 100%.**
 
 ## 2. The headline is narrower than "MoQ wins"
 
-**Exactly one configuration in the matrix meets the safety deadline: MoQ with partial reliability
-*and* a bounded transport buffer (0.7% miss at 37 ms).** Everything else — including MoQ over QUIC
-at its default window — misses 77-100% of BBox deadlines.
+**Only MoQ over QUIC with a bounded transport buffer meets the safety deadline** (0.7% miss at
+37 ms). Every other protocol in the matrix — MQTT over either transport, MoQ over TCP or UDP, and
+MoQ over QUIC at its default window — misses 77-100% of BBox deadlines.
 
-MoQ at a default window performs essentially the same as the fully reliable baseline (1030 ms,
-~77% miss). The protocol's mechanisms only pay off once the transport queue is shallow enough
-that delivery-timeout shedding can actually reach the backlog. **Partial reliability is necessary
-but not sufficient; it must be paired with a queue near the bandwidth-delay product.** That is
-the bufferbloat result (see `moq-operating-envelope.md`), now confirmed across the whole matrix
-rather than inferred from one protocol.
+But the credit does not go where we first assumed. The window sweep
+(`moq-operating-envelope.md`) shows the **bounded window**, not the delivery-timeout shedding, is
+what buys the deadline: the fully reliable MoQ baseline at the same 128 kB window reaches 42 ms /
+0.9% miss, statistically indistinguishable from partial reliability's 40 ms / 1.5%. MoQ at a
+*default* window performs the same as that reliable baseline (≈1030 ms, ~77% miss).
+
+So the correct claim is narrower and more precise:
+
+- **What beats MQTT is MoQ's stream-per-subgroup structure over QUIC, plus a queue sized near the
+  bandwidth-delay product.** MQTT cannot do either: its framing assumes one ordered byte stream,
+  and it has no backpressure signal with which to bound its own queue.
+- **What delivery-timeout shedding adds is a bounded bulk track**, not protection of the
+  safety track: at 128 kB it holds PCloud at 966 ms where the reliable baseline lets it reach
+  **14 067 ms**. Bounded staleness under overload is the mechanism's real contribution.
 
 The gap decomposes cleanly into three layers:
 

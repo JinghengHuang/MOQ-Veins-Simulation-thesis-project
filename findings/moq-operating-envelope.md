@@ -1,102 +1,109 @@
-# MoQ partial reliability: the operating envelope
-
-> **SUPERSEDED IN PART — read this first.** The numbers below were measured before two later
-> fixes: (a) the MoQ publisher was silently discarding writes once QUIC's send queue overran
-> (`quicSendRejected = 3468`), which flattered its latency, and (b) PCloud was still one 300 KB
-> object in some runs. The *direction* of every conclusion here still holds and was re-confirmed,
-> but the absolute figures should be taken from `mqtt-vs-moq.md`, which is the current,
-> silent-loss-gated comparison. Specifically, MoQ at a 128 kB window measures 37 ms / 0.7% miss
-> (not 30 ms / 0.0%), and at the default window ~1030 ms / 77% miss.
-
+# MoQ operating envelope: what actually buys the deadline
 
 Urban grid, 1 publisher car, 7 subscriber cars, edge relay. 200 s runs.
 `BBox` = 50 B / 100 ms, priority 0, deadline 100 ms, delivery timeout 200 ms (safety-critical).
-`PCloud` = 300 KB / 200 ms, priority 1, deadline 500 ms, delivery timeout 1.0 s (bulk).
+`PCloud` = one LiDAR sweep / 200 ms as 8 x 37.5 KB segments, deadline 500 ms, delivery timeout
+1.0 s (bulk).
 
-`DELIVERED` is measured against the publisher's offered count. Subscriber cars spawn over the
-first 35 s of the run, so they cannot receive objects published before they existed: **~62% is
-the ceiling**, not 100%. A track at ~62% is fully delivered; a track at 0.2% is annihilated.
+Sweeping the QUIC connection flow-control window, with `sendQueueLimit` scaled alongside it.
+`MOQ_Partial` = delivery-timeout shedding; `MOQ_SW` = same window, fully reliable (no shedding).
+
+**Validity:** all 12 runs report `quicSendRejected = 0`, and all 12 complete. Earlier versions of
+this sweep were holed by `FLOW_CONTROL_ERROR` and distorted by silent write loss; both are fixed.
+
+**Delivery ceiling:** subscriber cars spawn over the first 35 s and cannot receive what was
+published earlier. **~62% is full delivery**, not 100%.
 
 ---
 
-## 1. Two defects fixed first
+## 1. The sweep
 
-Neither was a parameter limit; both were ours, and both had to go before any sweep meant
-anything.
+### BBox (safety-critical, 100 ms deadline)
 
-**Publisher deadlock.** `flushSendBuffer` set `quicBlocked` from its own occupancy estimate, but
-that flag is cleared only by QUIC's drain indication — and INET only fires a drain once its queue
-has first risen *above* the low-water mark. Our queue peaked at 26042 B against a 26214 B mark,
-so the drain never came and the publisher blocked itself for the rest of every run (8 of 412 BBox
-objects sent). The estimate now only gates the write loop; `quicBlocked` is driven purely by the
-real full/drain callbacks.
+| window | `MOQ_Partial` latency / miss / delivered | `MOQ_SW` latency / miss / delivered |
+|---|---|---|
+| 2 MB | 955 ms / 81.6% / 59.6% | 1030 ms / 77.8% / 60.1% |
+| 1 MB | 431 ms / 71.0% / 55.1% | 484 ms / 80.6% / 61.1% |
+| 512 kB | 438 ms / 75.4% / 61.4% | 360 ms / 63.2% / 62.0% |
+| 256 kB | 49 ms / 3.1% / 62.4% | 69 ms / 11.3% / 62.3% |
+| 128 kB | 40 ms / 1.5% / 61.6% | 42 ms / 0.9% / 61.8% |
+| **64 kB** | **31 ms / 0.0% / 60.7%** | 36 ms / 0.3% / 54.8% |
 
-**Flow-control leak on reset (RFC 9000 §4.5).** `RESET_STREAM` released stream-level flow-control
-credit for abandoned bytes but not connection-level credit, which is otherwise only advanced when
-the application pops data — and abandoned bytes are never popped. Every reset therefore burned
-connection window permanently. Not the cause of the stall, but it would have deadlocked any
-run that reset often enough.
+### PCloud (bulk, 500 ms deadline)
 
-## 2. The dominant lever is queue depth, not shedding
+| window | `MOQ_Partial` latency / miss / delivered | `MOQ_SW` latency / miss / delivered |
+|---|---|---|
+| 2 MB | 2727 ms / 70.7% / 55.4% | 2587 ms / 72.1% / 53.4% |
+| 512 kB | 3642 ms / 65.2% / 53.9% | 3641 ms / 57.8% / 51.3% |
+| 256 kB | 967 ms / 99.3% / 33.2% | 8082 ms / 99.4% / 40.3% |
+| 128 kB | 966 ms / 99.6% / 22.0% | **14 067 ms** / 99.7% / 28.1% |
+| 64 kB | 945 ms / 99.6% / 18.7% | **13 634 ms** / 99.7% / 23.4% |
 
-Sweeping the QUIC flow-control window (with `sendQueueLimit` scaled with it):
+## 2. Queue depth is what buys the deadline — not shedding
 
-| window | BBox latency | BBox miss | BBox delivered | PCloud delivered |
-|---|---|---|---|---|
-| 2 MB | 771 ms | 67.7% | 9.7% | 45.3% |
-| 1 MB | 397 ms | 66.4% | 12.3% | 47.0% |
-| 256 kB | 32 ms | **0.0%** | 17.5% | 0.4% |
-| 128 kB | 30 ms | **0.0%** | 14.9% | 0.2% |
-| 64 kB | 29 ms | **0.0%** | 16.3% | 0.2% |
+BBox goes from **~81% deadline-miss at 2 MB to 0% at 64 kB**, a ~30x latency collapse
+(955 ms -> 31 ms), purely by shrinking the transport buffer. A 2 MB window is ~1.3 s of standing
+queue at the ~12 Mbps this link achieves, so no application-layer mechanism can meet a 100 ms
+deadline behind it. This is the bufferbloat the MoQ draft warns about in §3.6.1.
 
-BBox latency collapses ~25× (771 ms → 29 ms) purely by shrinking the transport buffer. A 2 MB
-window is ~1.3 s of standing queue at the ~12 Mbps this link achieves, so no amount of
-application-layer cleverness can meet a 100 ms deadline behind it. This is the bufferbloat the
-MoQ draft warns about in §3.6.1.
+**And the reliable baseline gets there too.** `MOQ_SW` at 128 kB reaches 42 ms / 0.9% miss —
+statistically indistinguishable from `MOQ_Partial`'s 40 ms / 1.5%. **On the safety track,
+delivery-timeout shedding adds almost nothing once the queue is shallow.** This corrects an
+earlier claim in this file; the honest reading is that the window does nearly all the work.
 
-## 3. But BBox delivery was still terrible — and that was a config bug
+Shedding helps only at the *margin* of the envelope: at 256 kB, `MOQ_Partial` reaches 3.1% miss
+against `MOQ_SW`'s 11.3%, and at 64 kB it is the only config with a clean 0.0%.
 
-At every small window the safety track was still only ~15% delivered. Diagnosis: BBox's mean
-send-buffer dwell was **34 ms**, far under its 200 ms timeout, so those objects had *not* aged
-out. They were collateral damage. With `objectsPerGroup = 10`, ten BBox objects shared one stream
-(one subgroup), and §10.4.3's reset abandons *the stream* — so each of 40 resets destroyed ~9
-further objects. 291 of 411 BBox objects were lost this way.
+## 3. What partial reliability actually buys: a bounded bulk track
 
-Setting `objectsPerGroup = 1` on BBox (64 kB window):
+The real difference is on PCloud, and it is dramatic:
 
-| | offered | sent | shed | delivered | latency | deadline miss |
-|---|---|---|---|---|---|---|
-| **BBox** | 411 | **411** | **0** | **62.3%** (the ceiling) | **30 ms** | **0.0%** |
-| PCloud | 208 | 4 | 199 | 0.2% | 879 ms | 100% |
+| window | `MOQ_Partial` PCloud latency | `MOQ_SW` PCloud latency |
+|---|---|---|
+| 128 kB | **966 ms** | **14 067 ms** |
+| 64 kB | **945 ms** | **13 634 ms** |
 
-This is the intended result: **the safety-critical track is fully delivered and 100% on time,
-while the bulk track absorbs all the loss.** It also beats the fully reliable baseline at the
-same window (`MOQ_SW` @64 kB: 60.9% delivered, 64 ms, 16.9% miss), so partial reliability is
-adding value rather than merely trading delivery for latency.
+Once the window is shallow, the reliable baseline **cannot drop anything**, so the bulk backlog
+simply queues: PCloud arrives **14 seconds** late. `MOQ_Partial` sheds stale segments and holds
+PCloud at ~1 s — a **14x** reduction — at the cost of delivering less of it (22% vs 28%).
 
-**Design lesson (RQ1/RQ3):** subgroup size is a loss-amplification factor. Batching objects onto
-a shared stream multiplies the cost of every reset by the group size. A track you intend to
-protect must not share a subgroup stream with objects you are willing to abandon.
+Both miss PCloud's 500 ms deadline ~99.6% of the time, so neither is *useful* for the bulk track
+at these windows. But 1 s of bounded staleness is a fundamentally different failure mode from a
+14 s unbounded backlog: the latter means the receiver is acting on 14-second-old perception data,
+which is worse than having none.
 
-## 4. Relation to the research questions
+**So the value of MoQ's delivery timeout is bounding staleness under overload, not protecting the
+latency-critical track.** The window protects the latency-critical track.
 
-- **RQ1 (design):** the MoQ side is now faithful — group/subgroup→stream, RESET_STREAM,
-  delivery timeout over both buffered and in-flight objects, priority reaching the transport.
-  The two defects above are design findings in their own right: an app must not infer transport
-  backpressure, and reset granularity must match the unit you are willing to lose.
-- **RQ3 (which V2X use cases benefit):** MoQ helps a **small, high-rate, latency-critical**
-  stream sharing a congested uplink with **bulk** traffic — the BBox/PCloud split is exactly
-  that shape, and BBox goes from 68% deadline-miss to 0%. It does **not** help if the transport
-  queue is deep (§2), and it actively *hurts* the protected track if that track's objects are
-  batched into shared subgroups (§3). The bulk track is not "degraded" but effectively
-  **sacrificed** (0.2% delivered) — MoQ buys the safety track's deadline by giving up the
-  point cloud almost entirely, which is the right trade for collision warning and the wrong one
-  for, say, HD map upload.
-- **RQ2:** untouched by this work. MQTT is still absent from the comparison set.
+## 4. The cost, stated plainly
 
-## 5. Open issue
+Shrinking the window to meet BBox's deadline costs the bulk track:
 
-`FLOW_CONTROL_ERROR` still kills some sweep points (`MOQ_SW` at 512/256/128 kB, `MOQ_Partial` at
-512 kB), so the reliable baseline curve has holes. It predates this work. It should be diagnosed
-before the MoQ-vs-MQTT-vs-TCP-vs-UDP comparison is run, or the baseline will be incomplete at
-exactly the window sizes we now know matter most.
+- PCloud delivery falls from 55.4% (2 MB) to 18.7% (64 kB).
+- The publisher sheds 916 of 1584 PCloud segments at 64 kB, and the relay a further 364.
+- BBox delivery is untouched throughout (~60-62%, the ceiling), with **zero** BBox shed at every
+  window from 512 kB down. The safety track is never sacrificed.
+
+## 5. Relation to the research questions
+
+- **RQ1 (design):** a MoQ-over-5G V2X design must size the transport buffer near the
+  bandwidth-delay product. Partial reliability layered on a deep buffer achieves nothing —
+  measured, not assumed (2 MB: 81.6% miss *with* shedding enabled).
+- **RQ3 (which use cases benefit):** MoQ suits a **small, high-rate, latency-critical** stream
+  sharing a congested uplink with **bulk** traffic. It delivers the safety track at 31 ms with 0%
+  deadline miss and full delivery. The bulk track is **sacrificed** (18.7% delivered), which is
+  the right trade for collision warning and the wrong one for HD-map upload. A workload with no
+  deadline and a hard no-loss requirement should not use this configuration at all.
+- **RQ2:** see `mqtt-vs-moq.md`. The relevant point from this sweep is that MoQ's advantage over
+  MQTT is *conditional on the bounded window* — MoQ at a default window is no better than the
+  reliable baseline, and loses to nothing but its own queue.
+
+## 6. Caveats
+
+The 512 kB and 1 MB points are noisy and not monotonic (e.g. `MOQ_Partial` BBox is 431 ms at 1 MB
+but 438 ms at 512 kB, and `MOQ_SW` is *better* than `MOQ_Partial` at 512 kB). These are single
+runs with a stochastic channel (log-normal shadowing, Jakes fading) and mid-run handovers; the
+transition region between "bufferbloated" and "shallow" is where run-to-run variance is largest.
+The endpoints (2 MB and 64-128 kB) are separated by an order of magnitude and are not in doubt,
+but **any claim about the transition region needs repetitions with different seeds** before it
+goes in the thesis.
