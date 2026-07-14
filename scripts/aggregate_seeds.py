@@ -25,7 +25,7 @@ from collections import defaultdict
 T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
        8: 2.306, 9: 2.262, 10: 2.228}
 
-ORDER = ["MOQ_Partial_128", "MOQ_SW_128", "MOQ_QUIC", "MQTT_QUIC",
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC",
          "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
 
 

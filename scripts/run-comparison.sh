@@ -30,8 +30,6 @@ S=/home/jhuang/thesiswork/simu5g-git
 NED="$M/src:.:$I/src:$V/src/veins:$V/subprojects/veins_inet/src/veins_inet:$S/src"
 LIBS="-l $I/src/INET -l $V/src/veins -l $V/subprojects/veins_inet/src/veins_inet -l $S/src/simu5g -l $M/src/MoQVeinsSim"
 
-# The bounded-window operating point identified by the window sweep. Not a separate ini config.
-TUNED="--**.quic.initialMaxData=128kB --**.quic.initialMaxStreamData=128kB --*.car[*].quic.sendQueueLimit=16384B"
 
 
 cd "$M/simulations" || exit 1
@@ -77,9 +75,11 @@ for s in $(seq 0 $((SEEDS - 1))); do
         running=$((running + 1))
         [ "$running" -ge "$PARALLEL" ] && { wait -n; running=$((running - 1)); }
     done
-    for spec in "MOQ_Partial_128 MOQ_Partial$SUF" "MOQ_SW_128 MOQ_SW$SUF"; do
+    # Bounded-window operating point: a named config, so the .sca carries a distinct configname
+    # and the two variants of MoQ can be told apart in the analysis tool.
+    for spec in "MOQ_Partial_BDP MOQ_Partial_BDP$SUF" "MOQ_SW_BDP MOQ_SW_BDP$SUF"; do
         set -- $spec
-        run_one "$s" "$1" "$2" $TUNED &
+        run_one "$s" "$1" "$2" &
         running=$((running + 1))
         [ "$running" -ge "$PARALLEL" ] && { wait -n; running=$((running - 1)); }
     done
