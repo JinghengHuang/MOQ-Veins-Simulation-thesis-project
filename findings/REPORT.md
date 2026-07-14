@@ -184,6 +184,11 @@ overload.** Two distinct contributions, and they should be reported as such.
   Both are reported; neither generalises to arbitrary V2X deployments.
 - **One workload shape.** One publisher, two tracks. `MOQ_Partial_MultiPub` (3 publishers) is
   implemented but **was not run** — no load-scaling evidence.
+- **The single-publisher topology is the most favourable case for MoQ's priority mechanism.**
+  MoQ priority is scoped to a session (draft §7), so it orders one sender's streams. With many
+  vehicles the contention is *between* senders, arbitrated by the 5G MAC scheduler, which knows
+  nothing of MoQ priorities — MoQ could not protect one vehicle's safety data from another's
+  bulk data. Reasoned, not measured: [`topology-and-priority-scope.md`](topology-and-priority-scope.md).
 - **MQTT QoS 0 only.** QoS 1 and 2 were not measured. Defensible (over TCP, QoS 0 already gets
   reliable delivery from the transport, and QoS 2's four-way handshake is not used in V2X
   telemetry) but it is a scope limit, not a result.
