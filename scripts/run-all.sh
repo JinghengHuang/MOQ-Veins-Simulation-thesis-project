@@ -52,6 +52,7 @@ echo "=== 3. window sweep (single seed; the endpoints differ by an order of magn
 cd "$MOQ/simulations" || exit 1
 NED="$MOQ/src:.:$INET/src:/home/jhuang/thesiswork/veins-git/src/veins:/home/jhuang/thesiswork/veins-git/subprojects/veins_inet/src/veins_inet:$SIMU5G/src"
 LIBS="-l $INET/src/INET -l /home/jhuang/thesiswork/veins-git/src/veins -l /home/jhuang/thesiswork/veins-git/subprojects/veins_inet/src/veins_inet -l $SIMU5G/src/simu5g -l $MOQ/src/MoQVeinsSim"
+rm -rf "$OUT/sweep"
 mkdir -p "$OUT/sweep"
 for cfg in MOQ_Partial_Window MOQ_SW_Window; do
     for r in 0 1 2 3 4 5; do

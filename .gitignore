@@ -3,7 +3,9 @@
 .env
 .vscode
 out
+.oppfeaturestate
 results*
 Reference Repos
 .claude
 charts
+Questions.md

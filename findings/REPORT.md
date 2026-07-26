@@ -146,9 +146,13 @@ collision warning; wrong trade for HD-map upload.
 
 **Highway: MoQ no longer meets the deadline** (97 ± 24 ms mean, but **18.2% miss**). The ordering
 is unchanged — MoQ is still 85× faster than MQTT/QUIC — but the 100 ms target is not reliably met.
-Three compounding causes, all intrinsic to the scenario: rural-macrocell propagation over ~1.5 km
-cells (weaker SINR, so the same 12 Mbps is more overloaded), one handover mid-run, and a publisher
-that lives twice as long and therefore tenders twice the data.
+The highway differs from the urban grid in several ways at once, and this two-scenario design cannot
+cleanly separate their contributions. The dominant observable driver is geometry: the ~1.5 km cells
+keep vehicles near the cell edge for much of the run, where path loss is high and SINR low, so the
+same ~12 Mbps offered load is more overloaded — *despite* the more favourable rural-macrocell LOS,
+which if anything mitigates it. A publisher that lives twice as long (and so tenders twice the data)
+compounds this. A mid-run handover may add further disruption, but handover was not instrumented in
+these runs, so its contribution is unquantified.
 
 **This is the single most important caveat in the report: "MoQ meets the 100 ms safety deadline"
 is an urban-scenario claim, not a general one.**

@@ -8,18 +8,38 @@
 # Runs are independent, so they execute in parallel (each opp_run gets its own SUMO instance from
 # veins_launchd). PARALLEL defaults to half the cores, leaving headroom for those SUMO processes.
 #
-# Usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway] [parallel]
+# Usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway] [parallel] [configuration]
 
-OUT=${1:?usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway] [parallel]}
+OUT=${1:?usage: run-comparison.sh <result-dir> [num-seeds] [urban|highway] [parallel] [configuration]}
 SEEDS=${2:-5}
 SCENARIO=${3:-urban}
 PARALLEL=${4:-$(( $(nproc) / 2 ))}
+CONFIGURATION=${5:-}
 
 case "$SCENARIO" in
     urban)   SUF="" ;;
     highway) SUF="_HW" ;;   # the Highway ini mixin; same workload, 3km corridor at 120km/h
     *) echo "unknown scenario: $SCENARIO (expected urban|highway)" >&2; exit 1 ;;
 esac
+
+SPECS=("MOQ_QUIC MOQ$SUF" "MOQ_TCP MOQ_TCP$SUF" "MOQ_UDP MOQ_UDP$SUF" "MQTT_TCP MQTT_TCP$SUF" "MQTT_QUIC MQTT_QUIC$SUF")
+
+case "$CONFIGURATION" in
+    moq)   SPECS=("MOQ_QUIC MOQ$SUF") ;;
+    moq_tcp)   SPECS=("MOQ_TCP MOQ_TCP$SUF") ;;
+    moq_udp)   SPECS=("MOQ_UDP MOQ_UDP$SUF") ;;
+    mqtt_quic) SPECS=("MQTT_QUIC MQTT_QUIC$SUF") ;;
+    mqtt_tcp)  SPECS=("MQTT_TCP MQTT_TCP$SUF") ;;
+    *) SPECS=("MOQ_QUIC MOQ$SUF" "MOQ_TCP MOQ_TCP$SUF" "MOQ_UDP MOQ_UDP$SUF" "MQTT_TCP MQTT_TCP$SUF" "MQTT_QUIC MQTT_QUIC$SUF");;
+esac
+
+IS_MOQ_QUIC=false
+for spec in "${SPECS[@]}"; do
+    if [[ "$spec" == "MOQ_QUIC MOQ$SUF" ]]; then
+        IS_MOQ_QUIC=true
+        break
+    fi
+done
 
 # Note: OMNeT++'s setenv references unset variables, so it cannot be sourced under `set -u`.
 source /home/jhuang/omnetpp/omnetpp-6.3.0/setenv -q >/dev/null 2>&1
@@ -30,9 +50,10 @@ S=/home/jhuang/thesiswork/simu5g-git
 NED="$M/src:.:$I/src:$V/src/veins:$V/subprojects/veins_inet/src/veins_inet:$S/src"
 LIBS="-l $I/src/INET -l $V/src/veins -l $V/subprojects/veins_inet/src/veins_inet -l $S/src/simu5g -l $M/src/MoQVeinsSim"
 
-
+echo "$OUT":
 
 cd "$M/simulations" || exit 1
+rm -rf "${OUT:?}"
 mkdir -p "$OUT"
 
 # One (seed, config) pair.
@@ -59,7 +80,7 @@ run_one() {
     if grep -q 'limit reached' "$OUT/${label}_s$s.log"; then
         status=OK
     else
-        status="ABORTED: $(grep -oE '<!> Error:.*' "$OUT/${label}_s$s.log" | head -1 | cut -c1-60)"
+        status="ABORTED: $(grep -oE '<!> Error:.*' "$OUT/${label}_s$s.log" | head -1)"
         mv "$dir/$label.sca" "$dir/$label.sca.aborted" 2>/dev/null   # keep it out of the analysis
     fi
     echo "[$SCENARIO] seed=$s $label -> $status rejected=${rej:-?}"
@@ -68,8 +89,7 @@ run_one() {
 # Runs are independent, so fan them out, capped at PARALLEL concurrent simulations.
 running=0
 for s in $(seq 0 $((SEEDS - 1))); do
-    for spec in "MOQ_QUIC MOQ$SUF" "MOQ_TCP MOQ_TCP$SUF" "MOQ_UDP MOQ_UDP$SUF" \
-                "MQTT_TCP MQTT_TCP$SUF" "MQTT_QUIC MQTT_QUIC$SUF"; do
+    for spec in "${SPECS[@]}"; do
         set -- $spec
         run_one "$s" "$1" "$2" &
         running=$((running + 1))
@@ -77,12 +97,14 @@ for s in $(seq 0 $((SEEDS - 1))); do
     done
     # Bounded-window operating point: a named config, so the .sca carries a distinct configname
     # and the two variants of MoQ can be told apart in the analysis tool.
-    for spec in "MOQ_Partial_BDP MOQ_Partial_BDP$SUF" "MOQ_SW_BDP MOQ_SW_BDP$SUF"; do
-        set -- $spec
-        run_one "$s" "$1" "$2" &
-        running=$((running + 1))
-        [ "$running" -ge "$PARALLEL" ] && { wait -n; running=$((running - 1)); }
-    done
+    if [ "$IS_MOQ_QUIC" == true ]; then
+        for spec in "MOQ_Partial_BDP MOQ_Partial_BDP$SUF" "MOQ_SW_BDP MOQ_SW_BDP$SUF"; do
+            set -- $spec
+            run_one "$s" "$1" "$2" &
+            running=$((running + 1))
+            [ "$running" -ge "$PARALLEL" ] && { wait -n; running=$((running - 1)); }
+        done
+    fi
 done
 wait
 

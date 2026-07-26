@@ -1,0 +1,1369 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<analysis version="2">
+    <inputs>
+        <input pattern="results/moq"/>
+        <input pattern="results/moq_highway"/>
+        <input pattern="results/moq_tcp"/>
+        <input pattern="results/moq_tcp_highway"/>
+    </inputs>
+    <charts>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1720837957" name="RQ2_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# --- shared helpers -------------------------------------------------------------------------
+# Runs are produced by scripts/run-comparison.sh into results/{urban,highway}/seedN/.
+# Config names carry the scenario: the "_HW" suffix means highway.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {
+    "MOQ_Partial_BDP": "MoQ partial\n(128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable\n(128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC\n(default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric_filter):
+    """Return a frame with one row per (config, scenario, seed): the mean over subscriber cars."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+    df = df[df["value"].notna()]
+    # Split the scenario out of the config name.
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True)
+    # MoQ over TCP/UDP and MQTT keep their own names; map ini configs onto the chart labels.
+    df["config"] = df["config"].replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    # One value per run (mean across subscriber cars), then aggregate across seeds.
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    return per_run
+
+def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95, "count"])
+    agg.columns = ["mean", "ci", "n"]
+    agg = agg.reset_index()
+
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+    x = np.arange(len(cfgs))
+    width = 0.38
+
+    plt.gcf().set_size_inches(11, 5)
+    for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
+        d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
+        vals = d["mean"] * scale
+        errs = d["ci"] * scale
+        plt.bar(x + (i - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                label=scen, color=colour, alpha=0.85)
+
+    plt.xticks(x, [LABEL.get(c, c) for c in cfgs], fontsize=9)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    if logy:
+        plt.yscale("log")
+    plt.legend(title="scenario")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+per_run = load('name =~ "track*BBox*meanLatency*"')
+agg = grouped_bar(per_run, "BBox mean end-to-end latency (ms)  [log scale]",
+                  "Safety-critical track: latency by protocol (mean of 8 seeds, 95% CI)",
+                  scale=1000, logy=True)
+# The deadline is the thing that matters, so draw it.
+plt.axhline(100, color="crimson", linestyle="--", linewidth=1.2)
+plt.annotate("100 ms deadline", xy=(0, 100), xytext=(3, 4), textcoords="offset points",
+             color="crimson", fontsize=9)
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Safety track (BBox): end-to-end latency. Only MoQ with a bounded window meets the 100ms deadline"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1186086465" name="RQ2_BBox_deadline_miss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# --- shared helpers -------------------------------------------------------------------------
+# Runs are produced by scripts/run-comparison.sh into results/{urban,highway}/seedN/.
+# Config names carry the scenario: the "_HW" suffix means highway.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {
+    "MOQ_Partial_BDP": "MoQ partial\n(128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable\n(128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC\n(default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric_filter):
+    """Return a frame with one row per (config, scenario, seed): the mean over subscriber cars."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+    df = df[df["value"].notna()]
+    # Split the scenario out of the config name.
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True)
+    # MoQ over TCP/UDP and MQTT keep their own names; map ini configs onto the chart labels.
+    df["config"] = df["config"].replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    # One value per run (mean across subscriber cars), then aggregate across seeds.
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    return per_run
+
+def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95, "count"])
+    agg.columns = ["mean", "ci", "n"]
+    agg = agg.reset_index()
+
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+    x = np.arange(len(cfgs))
+    width = 0.38
+
+    plt.gcf().set_size_inches(11, 5)
+    for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
+        d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
+        vals = d["mean"] * scale
+        errs = d["ci"] * scale
+        plt.bar(x + (i - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                label=scen, color=colour, alpha=0.85)
+
+    plt.xticks(x, [LABEL.get(c, c) for c in cfgs], fontsize=9)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    if logy:
+        plt.yscale("log")
+    plt.legend(title="scenario")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+per_run = load('name =~ "track*BBox*deadlineMissRatio*"')
+agg = grouped_bar(per_run, "BBox deadline-miss ratio (%)",
+                  "Safety-critical track: fraction of objects missing the 100ms deadline",
+                  scale=100)
+plt.ylim(0, 105)
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Safety track (BBox): deadline-miss ratio"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="850584692" name="RQ2_PCloud_goodput" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# --- shared helpers -------------------------------------------------------------------------
+# Runs are produced by scripts/run-comparison.sh into results/{urban,highway}/seedN/.
+# Config names carry the scenario: the "_HW" suffix means highway.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {
+    "MOQ_Partial_BDP": "MoQ partial\n(128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable\n(128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC\n(default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric_filter):
+    """Return a frame with one row per (config, scenario, seed): the mean over subscriber cars."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+    df = df[df["value"].notna()]
+    # Split the scenario out of the config name.
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True)
+    # MoQ over TCP/UDP and MQTT keep their own names; map ini configs onto the chart labels.
+    df["config"] = df["config"].replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    # One value per run (mean across subscriber cars), then aggregate across seeds.
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    return per_run
+
+def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95, "count"])
+    agg.columns = ["mean", "ci", "n"]
+    agg = agg.reset_index()
+
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+    x = np.arange(len(cfgs))
+    width = 0.38
+
+    plt.gcf().set_size_inches(11, 5)
+    for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
+        d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
+        vals = d["mean"] * scale
+        errs = d["ci"] * scale
+        plt.bar(x + (i - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                label=scen, color=colour, alpha=0.85)
+
+    plt.xticks(x, [LABEL.get(c, c) for c in cfgs], fontsize=9)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    if logy:
+        plt.yscale("log")
+    plt.legend(title="scenario")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+per_run = load('name =~ "track*PCloud*throughput*"')
+agg = grouped_bar(per_run, "PCloud goodput delivered (Mbps)",
+                  "Bulk track: goodput. MoQ trades throughput for timeliness -- it does not beat MQTT here",
+                  scale=1e-6)
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Bulk track (PCloud): goodput. MoQ does NOT beat MQTT on throughput"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1682789874" name="RQ2_BBox_delivered" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# --- shared helpers -------------------------------------------------------------------------
+# Runs are produced by scripts/run-comparison.sh into results/{urban,highway}/seedN/.
+# Config names carry the scenario: the "_HW" suffix means highway.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {
+    "MOQ_Partial_BDP": "MoQ partial\n(128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable\n(128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC\n(default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric_filter):
+    """Return a frame with one row per (config, scenario, seed): the mean over subscriber cars."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+    df = df[df["value"].notna()]
+    # Split the scenario out of the config name.
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True)
+    # MoQ over TCP/UDP and MQTT keep their own names; map ini configs onto the chart labels.
+    df["config"] = df["config"].replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    # One value per run (mean across subscriber cars), then aggregate across seeds.
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    return per_run
+
+def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95, "count"])
+    agg.columns = ["mean", "ci", "n"]
+    agg = agg.reset_index()
+
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+    x = np.arange(len(cfgs))
+    width = 0.38
+
+    plt.gcf().set_size_inches(11, 5)
+    for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
+        d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
+        vals = d["mean"] * scale
+        errs = d["ci"] * scale
+        plt.bar(x + (i - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                label=scen, color=colour, alpha=0.85)
+
+    plt.xticks(x, [LABEL.get(c, c) for c in cfgs], fontsize=9)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    if logy:
+        plt.yscale("log")
+    plt.legend(title="scenario")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+# Delivery must be read against what the publisher OFFERED; the subscriber-side loss scalars
+# cannot see a track that was dropped wholesale (see findings/ISSUES-AND-LIMITS.md A2.6).
+per_run = load('name =~ "track*BBox*objectsReceived*"')
+agg = grouped_bar(per_run, "BBox objects received per subscriber",
+                  "Safety-critical track: objects delivered (subscribers spawn mid-run, so this has a ceiling)")
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Safety track (BBox): objects delivered per subscriber"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="724817873" name="RQ3_sweep_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# --- shared helpers -------------------------------------------------------------------------
+# Runs are produced by scripts/run-comparison.sh into results/{urban,highway}/seedN/.
+# Config names carry the scenario: the "_HW" suffix means highway.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {
+    "MOQ_Partial_BDP": "MoQ partial\n(128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable\n(128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC\n(default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric_filter):
+    """Return a frame with one row per (config, scenario, seed): the mean over subscriber cars."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+    df = df[df["value"].notna()]
+    # Split the scenario out of the config name.
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True)
+    # MoQ over TCP/UDP and MQTT keep their own names; map ini configs onto the chart labels.
+    df["config"] = df["config"].replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    # One value per run (mean across subscriber cars), then aggregate across seeds.
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    return per_run
+
+def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95, "count"])
+    agg.columns = ["mean", "ci", "n"]
+    agg = agg.reset_index()
+
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+    x = np.arange(len(cfgs))
+    width = 0.38
+
+    plt.gcf().set_size_inches(11, 5)
+    for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
+        d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
+        vals = d["mean"] * scale
+        errs = d["ci"] * scale
+        plt.bar(x + (i - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                label=scen, color=colour, alpha=0.85)
+
+    plt.xticks(x, [LABEL.get(c, c) for c in cfgs], fontsize=9)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    if logy:
+        plt.yscale("log")
+    plt.legend(title="scenario")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+df = results.get_scalars('name =~ "*BBox*meanLatency*" AND runattr:configname =~ "MOQ_*_Window"',
+                         include_itervars=True, include_runattrs=True)
+if df.empty:
+    raise chart.ChartScriptError("No sweep data. Run MOQ_Partial_Window and MOQ_SW_Window.")
+
+def to_bytes(w):
+    w = str(w).strip()
+    if w.endswith("MB"): return float(w[:-2]) * 1e6
+    if w.endswith("kB"): return float(w[:-2]) * 1e3
+    return float(w)
+
+df["window"] = df["win"].map(to_bytes) / 1e3   # kB
+per_run = df.groupby(["configname", "window", "runID"])["value"].mean().reset_index()
+agg = per_run.groupby(["configname", "window"])["value"].mean().reset_index()
+
+plt.gcf().set_size_inches(8, 5)
+for cfg, label, style, colour in [
+        ("MOQ_Partial_Window", "Partial reliability (delivery timeout)", "-",  "#2b6cb0"),
+        ("MOQ_SW_Window",      "Reliable (no shedding)",                 "--", "#c05621")]:
+    d = agg[agg["configname"] == cfg].sort_values("window")
+    if not d.empty:
+        plt.plot(d["window"], d["value"] * 1000, style, marker="o", label=label, color=colour)
+
+plt.xscale("log")
+plt.xlabel("QUIC flow-control window (kB)  [log scale]")
+plt.ylabel("BBox mean latency (ms)")
+plt.yscale("log")
+plt.axhline(100, color="crimson", linestyle="--", linewidth=1.2)
+plt.annotate("100 ms deadline", xy=(plt.xlim()[0], 100), xytext=(4, 4),
+             textcoords="offset points", color="crimson", fontsize=9)
+plt.title("Safety track: latency vs transport queue depth\n(the two curves converge -- shedding adds little here)")
+plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Window sweep: the bounded window, not shedding, is what buys the deadline"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1439911338" name="RQ3_sweep_PCloud_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# --- shared helpers -------------------------------------------------------------------------
+# Runs are produced by scripts/run-comparison.sh into results/{urban,highway}/seedN/.
+# Config names carry the scenario: the "_HW" suffix means highway.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {
+    "MOQ_Partial_BDP": "MoQ partial\n(128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable\n(128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC\n(default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric_filter):
+    """Return a frame with one row per (config, scenario, seed): the mean over subscriber cars."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+    df = df[df["value"].notna()]
+    # Split the scenario out of the config name.
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True)
+    # MoQ over TCP/UDP and MQTT keep their own names; map ini configs onto the chart labels.
+    df["config"] = df["config"].replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    # One value per run (mean across subscriber cars), then aggregate across seeds.
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    return per_run
+
+def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95, "count"])
+    agg.columns = ["mean", "ci", "n"]
+    agg = agg.reset_index()
+
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+    x = np.arange(len(cfgs))
+    width = 0.38
+
+    plt.gcf().set_size_inches(11, 5)
+    for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
+        d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
+        vals = d["mean"] * scale
+        errs = d["ci"] * scale
+        plt.bar(x + (i - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                label=scen, color=colour, alpha=0.85)
+
+    plt.xticks(x, [LABEL.get(c, c) for c in cfgs], fontsize=9)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    if logy:
+        plt.yscale("log")
+    plt.legend(title="scenario")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+df = results.get_scalars('name =~ "*PCloud*meanLatency*" AND runattr:configname =~ "MOQ_*_Window"',
+                         include_itervars=True, include_runattrs=True)
+if df.empty:
+    raise chart.ChartScriptError("No sweep data. Run MOQ_Partial_Window and MOQ_SW_Window.")
+
+def to_bytes(w):
+    w = str(w).strip()
+    if w.endswith("MB"): return float(w[:-2]) * 1e6
+    if w.endswith("kB"): return float(w[:-2]) * 1e3
+    return float(w)
+
+df["window"] = df["win"].map(to_bytes) / 1e3   # kB
+per_run = df.groupby(["configname", "window", "runID"])["value"].mean().reset_index()
+agg = per_run.groupby(["configname", "window"])["value"].mean().reset_index()
+
+plt.gcf().set_size_inches(8, 5)
+for cfg, label, style, colour in [
+        ("MOQ_Partial_Window", "Partial reliability (delivery timeout)", "-",  "#2b6cb0"),
+        ("MOQ_SW_Window",      "Reliable (no shedding)",                 "--", "#c05621")]:
+    d = agg[agg["configname"] == cfg].sort_values("window")
+    if not d.empty:
+        plt.plot(d["window"], d["value"] * 1, style, marker="o", label=label, color=colour)
+
+plt.xscale("log")
+plt.xlabel("QUIC flow-control window (kB)  [log scale]")
+plt.ylabel("PCloud mean latency (s)")
+plt.yscale("log")
+plt.title("Bulk track: latency vs transport queue depth\nWithout shedding the backlog is unbounded (~14 s); with it, ~1 s")
+plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Window sweep: what shedding DOES buy is a bounded bulk track"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="536746140" name="RQ2_BBox_latency_CDF" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# --- shared helpers -------------------------------------------------------------------------
+# Runs are produced by scripts/run-comparison.sh into results/{urban,highway}/seedN/.
+# Config names carry the scenario: the "_HW" suffix means highway.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {
+    "MOQ_Partial_BDP": "MoQ partial\n(128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable\n(128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC\n(default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric_filter):
+    """Return a frame with one row per (config, scenario, seed): the mean over subscriber cars."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+    df = df[df["value"].notna()]
+    # Split the scenario out of the config name.
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True)
+    # MoQ over TCP/UDP and MQTT keep their own names; map ini configs onto the chart labels.
+    df["config"] = df["config"].replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    # One value per run (mean across subscriber cars), then aggregate across seeds.
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    return per_run
+
+def grouped_bar(per_run, ylabel, title, scale=1.0, logy=False, pct=False):
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95, "count"])
+    agg.columns = ["mean", "ci", "n"]
+    agg = agg.reset_index()
+
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+    x = np.arange(len(cfgs))
+    width = 0.38
+
+    plt.gcf().set_size_inches(11, 5)
+    for i, (scen, colour) in enumerate([("urban", "#2b6cb0"), ("highway", "#c05621")]):
+        d = agg[agg["scenario"] == scen].set_index("config").reindex(cfgs)
+        vals = d["mean"] * scale
+        errs = d["ci"] * scale
+        plt.bar(x + (i - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                label=scen, color=colour, alpha=0.85)
+
+    plt.xticks(x, [LABEL.get(c, c) for c in cfgs], fontsize=9)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    if logy:
+        plt.yscale("log")
+    plt.legend(title="scenario")
+    plt.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+# Per-object latencies from the vectors, urban runs only, so the tail is visible.
+vec = results.get_vectors('name =~ "endToEndLatency:vector" AND runattr:configname =~ "*"',
+                          include_runattrs=True)
+if vec.empty:
+    raise chart.ChartScriptError("No vector data. Ensure vector-recording is on for the app modules.")
+
+vec = vec[~vec["configname"].str.endswith("_HW")]
+vec["config"] = vec["configname"].replace({"MOQ": "MOQ_QUIC"})
+
+plt.gcf().set_size_inches(8, 5)
+rows = []
+for cfg in ORDER:
+    d = vec[vec["config"] == cfg]
+    if d.empty:
+        continue
+    vals = np.concatenate([np.asarray(v) for v in d["vecvalue"] if len(v)])
+    if not len(vals):
+        continue
+    vals = np.sort(vals) * 1000        # ms
+    y = np.arange(1, len(vals) + 1) / len(vals)
+    plt.plot(vals, y, label=LABEL.get(cfg, cfg))
+    rows.append({"config": cfg, "median_ms": float(np.median(vals)), "p95_ms": float(np.percentile(vals, 95))})
+
+agg = pd.DataFrame(rows)
+plt.xscale("log")
+plt.axvline(100, color="crimson", linestyle="--", linewidth=1.2)
+plt.annotate("100 ms deadline", xy=(100, 0.05), xytext=(4, 0), textcoords="offset points",
+             color="crimson", fontsize=9)
+plt.xlabel("End-to-end latency (ms)  [log scale]")
+plt.ylabel("CDF")
+plt.title("Safety-critical track: latency distribution, urban scenario")
+plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Safety track (BBox): latency distribution (urban)"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0.251110-bb3d6a4731" icon="icons/full/obj/barchart.png" id="2026095768" name="QueueLength by protocols(partial)" resultTypes="scalar" template="barchart_native" type="BAR">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+
+# get chart properties
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+# collect parameters for query
+filter_expression = props["filter"]
+include_fields = props["include_fields"] == "true"
+
+# query scalar data into dataframe
+try:
+    df = results.get_scalars(filter_expression, include_fields=include_fields, include_attrs=True, include_runattrs=True, include_itervars=True)
+except results.ResultQueryError as e:
+    raise chart.ChartScriptError("Error while querying results: " + str(e))
+
+if df.empty:
+    raise chart.ChartScriptError("The result filter returned no data.")
+
+groups, series = utils.select_groups_series(df, props)
+
+utils.add_legend_labels(df, props, groups + series)
+utils.sort_rows_by_legend(df, props)
+del df["legend"]
+
+confidence_level = utils.get_confidence_level(props)
+valuedf, errorsdf, metadf = utils.pivot_for_barchart(df, groups, series, confidence_level, sort=False)
+
+utils.plot_bars(valuedf, errorsdf, metadf, props, sort=False)
+
+utils.postconfigure_plot(props)
+
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(df, props)
+]]></script>
+            <dialogPage id="INPUT" label="Input"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang" />
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2" />
+  <x:children>
+    <label text="Filter expression:" >
+        <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </label>
+
+    <styledText x:id="filter" x:style="BORDER|V_SCROLL|H_SCROLL" x:id.contentAssist="filter" x:id.resultType="scalar">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+    </styledText>
+    
+    <button x:id="include_fields" x:style="CHECK" text="Include fields">
+      <layoutData x:class="GridData" horizontalAlignment="END" />
+    </button>
+    
+    <button x:id="simplify" x:style="PUSH" text="Simplify" x:id.role="simplify" x:id.targetControl="filter">
+      <layoutData x:class="GridData" horizontalAlignment="END" />
+    </button>
+
+    <label text="Multiple attributes can be selected in both fields below, separated by commas.">
+        <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </label>
+
+    <label text="Groups:"/>
+    <combo x:id="groups" x:style="BORDER" x:id.content="module,name,experiment,module+name,$itervarnames,$runattrnames">
+        <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </combo>
+
+    <label text="Series:"/>
+    <combo x:id="series" x:style="BORDER" x:id.content="module,name,experiment,module+name,$itervarnames,$runattrnames">
+        <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </combo>
+
+    <label text="Scalar values will be averaged across all attributes not selected above.">
+        <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </label>
+
+  </x:children>
+</xswt>
+]]></dialogPage>
+            <dialogPage id="BARS" label="Bars"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout"/>
+
+  <x:children>
+
+    <group text="Bars">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <!-- Baseline -->
+        <label text="Baseline:"/>
+        <text x:id="baseline" x:id.default="0" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+        <!-- Bar placement:Aligned/Overlap/InFront/Stacked -->
+        <label text="Bar placement:"/>
+        <combo x:id="bar_placement" x:id.default="Aligned" x:style="BORDER|READ_ONLY">
+          <add x:p0="Aligned"/>
+          <add x:p0="Overlap"/>
+          <add x:p0="InFront"/>
+          <add x:p0="Stacked"/>
+        </combo>
+
+        <!-- Rotate X labels by:0/30/45/60/90 -->
+        <label text="Rotate x labels by:"/>
+        <combo x:id="xlabel_rotation" x:id.default="0" x:style="BORDER|READ_ONLY">
+          <add x:p0="0"/>
+          <add x:p0="30"/>
+          <add x:p0="45"/>
+          <add x:p0="60"/>
+          <add x:p0="90"/>
+        </combo>
+
+      </x:children>
+    </group>
+
+    <group text="Hints">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="1"/>
+      <x:children>
+
+        <label x:style="WRAP" text="* To change the set of bar colors used, choose a different cycle seed on the Styling page">
+          <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+        </label>
+
+        <label x:style="WRAP" text="* To have more control over the specific colors, add properties in the Advanced page. Examples:">
+          <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+        </label>
+
+        <label x:style="WRAP" text="       `axes.prop_cycle: cycler('color', ['blue', 'green', 'red'])`  # on a Matplotlib chart: selects colors">
+          <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+        </label>
+
+        <label x:style="WRAP" text="       `Bar.Color/3: yellow`  # on a native chart: selects the color of the 3rd series">
+          <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+        </label>
+
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]></dialogPage>
+            <dialogPage id="PLOT" label="Plot"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2" makeColumnsEqualWidth="true"/>
+
+  <x:children>
+
+    <group text="Title">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Plot title -->
+    <label text="Plot title:"/>
+    <text x:id="title" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- X Axis { -->
+    <group text="X axis">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" verticalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <label text="Label:"/>
+    <text x:id="xaxis_title" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Y Axis { -->
+    <group text="Y axis">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <label text="Label:"/>
+    <text x:id="yaxis_title" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <label text="Unit:"/>
+    <text x:id="yaxis_unit" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <label text="Min:"/>
+    <text x:id="yaxis_min" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <label text="Max:"/>
+    <text x:id="yaxis_max" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </text>
+
+    <button x:id="yaxis_log" x:id.default="false" text="Logarithmic" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Grid { -->
+    <group text="Grid">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Display Legend? -->
+    <button x:id="grid_show" x:id.default="true" text="Show grid" x:style="CHECK" x:id.isEnabler="true">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- Show grid:None/Major/All -->
+    <label text="Density:"/>
+    <combo x:id="grid_density" x:id.default="Major" x:style="BORDER|READ_ONLY">
+      <add x:p0="Major"/>
+      <add x:p0="All"/>
+    </combo>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Legend { -->
+    <group text="Legend">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="false"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Display Legend? -->
+    <button x:id="legend_show" x:id.default="true" text="Show legend" x:style="CHECK" x:id.isEnabler="true" >
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- Placement -->
+    <label text="Placement:"/>
+    <combo x:id="legend_placement" x:id.default="upper right" x:style="BORDER|READ_ONLY">
+      <add x:p0="best"/>
+      <add x:p0="upper right"/>
+      <add x:p0="upper left"/>
+      <add x:p0="lower left"/>
+      <add x:p0="lower right"/>
+      <add x:p0="center left"/>
+      <add x:p0="center right"/>
+      <add x:p0="lower center"/>
+      <add x:p0="upper center"/>
+      <add x:p0="center"/>
+      <add x:p0="outside top left"/>
+      <add x:p0="outside top center"/>
+      <add x:p0="outside top right"/>
+      <add x:p0="outside bottom left"/>
+      <add x:p0="outside bottom center"/>
+      <add x:p0="outside bottom right"/>
+      <add x:p0="outside left top"/>
+      <add x:p0="outside left center"/>
+      <add x:p0="outside left bottom"/>
+      <add x:p0="outside right top"/>
+      <add x:p0="outside right center"/>
+      <add x:p0="outside right bottom"/>
+    </combo>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]></dialogPage>
+            <dialogPage id="LEGEND" label="Legend"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang" />
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+  </import>
+  <layout x:class="GridLayout" numColumns="1" />
+  <x:children>
+
+        <group text="Legend labels">
+
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="false" verticalAlignment="FILL" grabExcessVerticalSpace="false" />
+          <layout x:class="GridLayout" />
+          <x:children>
+            <button x:id='legend_automatic' text='Automatic' x:style='RADIO' x:id.default="true"/>
+            <composite>
+              <layoutData x:class="GridData" horizontalIndent="30"/>
+              <layout x:class="GridLayout" marginHeight="0" marginBottom="5"/>
+              <x:children>
+                <button x:id='legend_prefer_result_titles' text='Use result title instead of name where available' x:style='CHECK' x:id.default="true" x:id.enablerButton="legend_automatic"/>
+                <button x:id='legend_prefer_module_display_paths' text='Use module display path instead of full path where available' x:style='CHECK' x:id.default="true" x:id.enablerButton="legend_automatic"/>
+              </x:children>
+            </composite>
+
+            <button x:id='legend_manual' text='Manual' x:style='RADIO'/>
+            <composite>
+              <layoutData x:class="GridData" horizontalIndent="30"/>
+              <layout x:class="GridLayout" numColumns="2" marginHeight="0" marginBottom="5"/>
+              <x:children>
+                <label text="Format string:"/>
+                <text x:id="legend_format" x:style="BORDER" x:id.enablerButton="legend_manual" x:id.contentAssist="columns">
+                  <layoutData x:class="GridData" widthHint="200" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="CENTER" grabExcessVerticalSpace="false" />
+                </text>
+                <label text="Hint: Add $name or ${name} to insert content of data frame column; use $$ to insert dollar sign">
+                  <layoutData x:class="GridData" horizontalSpan="2" />
+                </label>
+              </x:children>
+            </composite>
+          </x:children>
+
+        </group>
+
+        <group text="Label tweaking">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+          <layout x:class="GridLayout" numColumns="1" />
+          <x:children>
+            <label x:style='WRAP' text="Enter string replacements (foo --&gt; bar) or sed-style replacements (/foo-regex/bar-regex/) to be applied to the labels, one per line:">
+              <layoutData x:class='GridData' horizontalAlignment='FILL' grabExcessHorizontalSpace='true'/>
+            </label>
+            <styledText x:id="legend_replacements" x:style="BORDER|V_SCROLL|H_SCROLL" x:id.contentAssist="columns">
+              <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true" />
+            </styledText>
+            <label x:style='WRAP' text="Hint: $name or ${name} inserts the content of a data frame column; use $$ to insert dollar sign">
+              <layoutData x:class='GridData' horizontalAlignment='FILL' grabExcessHorizontalSpace='true'/>
+            </label>
+            <!--
+            <label text="Examples:"/>
+            <label text='- &quot;/tcp/TCP/&quot; ==&gt; change &quot;tcp&quot; to &quot;TCP&quot;'/>
+            <label text='- &quot;/ +/ /&quot; ==&gt; replace multiple spaces with one space'/>
+            <label text="- &quot;/host\[(\d+)\]/in host \1/&quot; ==&gt; change &quot;host[21]&quot; to &quot;in host 21&quot; (note \1,\2 as group reference)"/>
+            <label text='- &quot;/\//:/&quot; or &quot;|\|:|&quot; ==&gt; replace slashes with colons'/>
+            -->
+          </x:children>
+        </group>
+
+
+  </x:children>
+</xswt>]]></dialogPage>
+            <dialogPage id="ORDERING" label="Ordering"><![CDATA[<?xml version='1.0' encoding='UTF-8'?>
+<xswt xmlns:x='http://sweet_swt.sf.net/xswt'>
+
+  <import xmlns='http://sweet_swt.sf.net/xswt'>
+    <package name='java.lang'/>
+    <package name='org.eclipse.swt.widgets' />
+    <package name='org.eclipse.swt.graphics' />
+    <package name='org.eclipse.swt.layout' />
+    <package name='org.eclipse.swt.custom' />
+    <package name='org.omnetpp.common.wizard.support' />
+    <package name='org.omnetpp.ned.editor.wizards.support' />
+    <package name='org.omnetpp.cdt.wizard.support' />
+  </import>
+
+  <layout x:class='GridLayout'/>
+
+  <x:children>
+
+    <group text="Ordering of items on the legend and on the plot">
+      <layoutData x:class="GridData" horizontalSpan="1" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <!-- ordering_regex_list -->
+        <label text='Primary ordering (one regex per line):'/>
+        <label text='Secondary ordering (one regex per line):'/>
+        <text x:id='ordering_regex_list' x:style='BORDER|WRAP|MULTI|V_SCROLL'>
+          <layoutData x:class='GridData' heightHint='60' horizontalAlignment='FILL' verticalAlignment='FILL' grabExcessHorizontalSpace='true' grabExcessVerticalSpace='true'/>
+        </text>
+
+        <!-- secondary_ordering_regex_list -->
+        <text x:id='secondary_ordering_regex_list' x:style='BORDER|WRAP|MULTI|V_SCROLL'>
+          <layoutData x:class='GridData' heightHint='60' horizontalAlignment='FILL' verticalAlignment='FILL' grabExcessHorizontalSpace='true' grabExcessVerticalSpace='true'/>
+        </text>
+
+        <!-- hint -->
+        <label x:style='WRAP' text='NOTE: Items will be ordered based on legend labels. Specify a series of regexes, one per line, to define the ranking of items. Each item&apos;s rank will be determined by the index of the first regex it matches. After sorting, items matching the first regex will appear at the top, those matching the second regex will be placed below, and so forth. Case-sensitive substring match is used.'>
+          <layoutData x:class='GridData' horizontalSpan='2' horizontalAlignment='FILL' grabExcessHorizontalSpace='true'/>
+        </label>
+
+        <!-- sorting -->
+        <button x:id='sorting' text='Use alphabetical sorting as tertiary ordering' x:style='CHECK' x:id.default="true">
+          <layoutData x:class='GridData' horizontalSpan='2'/>
+        </button>
+
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]></dialogPage>
+            <dialogPage id="STYLING" label="Styling"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2"/>
+
+  <x:children>
+
+    <!-- Colors { -->
+    <group text="Colors">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- backgroundColor -->
+    <label text="Background color:"/>
+    <ColorChooser x:id="Plot.BackgroundColor" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </ColorChooser>
+
+    <label text="Cycle seed:"/>
+    <spinner x:id="cycle_seed" x:id.default="0" selection="0" minimum="0" maximum="1000000" x:style="BORDER"/>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <group text="Fonts">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Title font -->
+    <label text="Title font:"/>
+    <FontChooser x:id="Plot.Title.Font" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </FontChooser>
+
+    <!-- Axis title font -->
+    <label text="Axis title font:"/>
+    <FontChooser x:id="Axis.Title.Font" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </FontChooser>
+
+    <!-- Label font -->
+    <label text="Label font:"/>
+    <FontChooser x:id="Axis.Label.Font" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </FontChooser>
+
+    <!-- Legend font -->
+    <label text="Legend font:"/>
+    <FontChooser x:id="Legend.Font" x:style="BORDER">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+    </FontChooser>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Legend { -->
+    <group text="Legend">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <button x:id="Legend.Border" text="Border" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+    <!-- Options { -->
+    <group text="Options">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+    <!-- Use antialias? -->
+    <button x:id="Plot.Antialias" text="Use antialias" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- Use caching? -->
+    <button x:id="Plot.Caching" text="Use caching" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+        <!-- Border? -->
+    <button x:id="X.Label.Wrap" text="Wrap labels" x:style="CHECK">
+      <layoutData x:class="GridData" horizontalSpan="2"/>
+    </button>
+
+    <!-- } -->
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]></dialogPage>
+            <dialogPage id="ADVANCED" label="Advanced"><![CDATA[<?xml version='1.0' encoding='UTF-8'?>
+<xswt xmlns:x='http://sweet_swt.sf.net/xswt'>
+  <import xmlns='http://sweet_swt.sf.net/xswt'>
+    <package name='java.lang'/>
+    <package name='org.eclipse.swt.widgets' />
+    <package name='org.eclipse.swt.graphics' />
+    <package name='org.eclipse.swt.layout' />
+    <package name='org.eclipse.swt.custom' />
+  </import>
+  <layout x:class='GridLayout' numColumns='1'/>
+  <x:children>
+    <label text="Here you can further customize the plot using properties."/>
+    <label text="The syntax is one entry per line in the 'key : value' format; comments (#) are also accepted."/>
+    <label text="Content Assist available (hit Ctrl+Space)."/>
+    <styledText x:id="plot.properties" x:style="BORDER|V_SCROLL|H_SCROLL" x:id.contentAssist="plotproperties">
+      <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true" verticalAlignment="FILL" grabExcessVerticalSpace="true"/>
+    </styledText>
+  </x:children>
+</xswt>
+]]></dialogPage>
+            <dialogPage id="EXPORT" label="Export"><![CDATA[<?xml version="1.0" encoding="UTF-8"?>
+<xswt xmlns:x="http://sweet_swt.sf.net/xswt">
+
+  <import xmlns="http://sweet_swt.sf.net/xswt">
+    <package name="java.lang"/>
+    <package name="org.eclipse.swt.widgets" />
+    <package name="org.eclipse.swt.graphics" />
+    <package name="org.eclipse.swt.layout" />
+    <package name="org.eclipse.swt.custom" />
+    <package name="org.omnetpp.common.wizard.support" />
+    <package name="org.omnetpp.ned.editor.wizards.support" />
+    <package name="org.omnetpp.cdt.wizard.support" />
+  </import>
+  <layout x:class="GridLayout" numColumns="2"/>
+
+  <x:children>
+
+    <group text="Image export">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <label text="Image file name (w/o extension):"/>
+        <text x:id="image_export_filename" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+        <label text="Image width (inches):"/>
+        <text x:id="image_export_width" x:id.default="6" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+        <label text="Image height (inches):"/>
+        <text x:id="image_export_height" x:id.default="4" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+      </x:children>
+    </group>
+
+    <group text="Data export">
+      <layoutData x:class="GridData" horizontalSpan="2" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+      <layout x:class="GridLayout" numColumns="2"/>
+      <x:children>
+
+        <label text="File name (w/o extension):"/>
+        <text x:id="data_export_filename" x:style="BORDER">
+          <layoutData x:class="GridData" horizontalAlignment="FILL" grabExcessHorizontalSpace="true"/>
+        </text>
+
+      </x:children>
+    </group>
+
+  </x:children>
+</xswt>
+]]></dialogPage>
+            <property name="legend_prefer_module_display_paths" value="true"/>
+            <property name="grid_show" value="true"/>
+            <property name="ordering_regex_list" value=""/>
+            <property name="yaxis_unit" value=""/>
+            <property name="Plot.Caching" value="true"/>
+            <property name="legend_prefer_result_titles" value="true"/>
+            <property name="legend_manual" value=""/>
+            <property name="yaxis_title" value=""/>
+            <property name="legend_replacements" value=""/>
+            <property name="Legend.Border" value="false"/>
+            <property name="title" value="QueueLength by protocols(partial)"/>
+            <property name="legend_automatic" value="true"/>
+            <property name="Plot.Title.Font" value="Arial-regular-10"/>
+            <property name="cycle_seed" value="0"/>
+            <property name="Axis.Title.Font" value="Arial-regular-8"/>
+            <property name="bar_placement" value="Aligned"/>
+            <property name="sorting" value="true"/>
+            <property name="yaxis_log" value="false"/>
+            <property name="image_export_height" value="4"/>
+            <property name="Axis.Label.Font" value="Arial-regular-8"/>
+            <property name="legend_placement" value="upper right"/>
+            <property name="plot.properties" value=""/>
+            <property name="data_export_filename" value=""/>
+            <property name="xaxis_title" value=""/>
+            <property name="Plot.BackgroundColor" value="white"/>
+            <property name="xlabel_rotation" value="0"/>
+            <property name="grid_density" value="Major"/>
+            <property name="groups" value=""/>
+            <property name="yaxis_min" value=""/>
+            <property name="Legend.Font" value="Arial-regular-8"/>
+            <property name="baseline" value="0"/>
+            <property name="image_export_filename" value=""/>
+            <property name="legend_format" value=""/>
+            <property name="filter" value="type =~ scalar AND isfield =~ false AND module =~ &quot;Highway.upf.ppp[*].queue&quot; AND name =~ queueLength:max"/>
+            <property name="X.Label.Wrap" value="true"/>
+            <property name="secondary_ordering_regex_list" value=""/>
+            <property name="series" value=""/>
+            <property name="legend_show" value="true"/>
+            <property name="include_fields" value="false"/>
+            <property name="simplify" value=""/>
+            <property name="yaxis_max" value=""/>
+            <property name="Plot.Antialias" value="true"/>
+            <property name="image_export_width" value="6"/>
+        </chart>
+    </charts>
+</analysis>

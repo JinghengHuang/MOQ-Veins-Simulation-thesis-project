@@ -369,6 +369,7 @@ void MoqPublisherApp::sendControlFrame(const MoqControlFrame& c) {
 // it on the single stream; UDP fragments it into bounded datagrams.
 void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
     auto frame = MoqFraming::encode(f);
+    PubTrackStat& ps = pubStats[tid];
     switch (proto) {
         case PROTO_QUIC: {
             // MoQ maps one Subgroup onto one stream (draft-14 section 2.2). Objects of the same
