@@ -63,6 +63,18 @@ for cfg in MOQ_Partial_Window MOQ_SW_Window; do
 done
 
 echo
+echo "=== 3b. operating-point comparison (300kB tested alternative -> results/bdp300) ==="
+# A separate durable folder the comparison above does not clear. 128kB is canonical (produced in
+# step 2); this generates the 300kB alternative so the "128kB beats 300kB" claim is reproducible.
+"$HERE/run-bdp300.sh" "$SEEDS" | grep -v "^$"
+
+echo
+echo "=== 3c. load scaling: multiple publishers (1-4 pub, round-robin + priority -> results/pubscale) ==="
+# RQ3 (extended): does MoQ's session-scoped priority hold as the safety load spreads across
+# radio-independent publishers? Answered by PubScale_N{1..4} and _Prio. Separate durable folder.
+"$HERE/run-pubscale.sh" "$OUT/pubscale" "$SEEDS" | grep -v "^$"
+
+echo
 echo "=== 4. verification ==="
 bad=0
 total=0

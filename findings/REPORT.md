@@ -26,7 +26,7 @@ on the edge server, 200 s runs.
   "independently interpretable" CPM segments (`pointcloud-segmentation.md`).
 - Offered load ≈ 12 Mbps, which saturates the uplink. Congestion is the point of the experiment.
 
-**Statistics.** Every figure is the **mean of 8 seeds ± 95% CI half-width** (t-distribution).
+**Statistics.** Every figure is the **mean of 5 seeds ± 95% CI half-width** (t-distribution).
 Reproduce with `scripts/run-all.sh`.
 
 **Delivery ceiling.** Subscriber cars spawn mid-run and cannot receive objects published before
@@ -109,10 +109,28 @@ timeliness; it does not provide both.**
 **The gap decomposes into three layers**, all mechanism-attributable:
 - **TCP is catastrophic** (16–26 s, 100% miss, ~4–12% delivered). A single ordered byte stream
   means a 37.5 KB PCloud segment head-of-line-blocks a 50 B BBox message, and no application
-  protocol can fix that from above. This dominates everything else.
+  protocol can fix that from above. This dominates everything else. **The highway data makes the
+  mechanism directly visible: TCP delivers BBox at the *same* latency as its own PCloud (7.55 s vs
+  7.45 s) — the safety track moves at the bulk track's pace because they share one ordered stream —
+  while QUIC decouples them (BBox 0.93 s vs PCloud 8.62 s, ~9×). This is HOL blocking measured, not
+  inferred, and it is distinct from the earlier advertised-window artifact (now fixed): TCP's bulk
+  throughput is at parity (PCloud 398 vs QUIC 499 objects delivered), yet BBox still collapses
+  (95 vs 404). The window fix removed the static starvation; the single ordered stream is what
+  remains.**
 - **QUIC alone buys ~8–18×** by removing cross-stream head-of-line blocking. Still 12–29× short of
   the deadline.
 - **The bounded window buys the remaining ~38×** (1246 → 33 ms, urban).
+
+**Why plain UDP also trails QUIC on goodput** (the comparison the three layers above omit; verified
+against a radio trace). UDP has no loss recovery, and the MoQ-over-UDP path hand-fragments each
+37.5 KB object into ~32 independent 1200 B datagrams reassembled all-or-nothing — so one lost
+fragment discards the whole object, P(delivered) ≈ (1−p)³². TCP and QUIC both retransmit and land
+within a few points of each other (highway PCloud 66.6% / 63.7% delivered); **UDP drops to 22.1%,
+and receives 3–4× *more* packets while completing *fewer* objects** — the direct fingerprint of
+fragmentation amplification. So "no flow control, just keep sending" is a liability, not an edge:
+uncontrolled sending into the ~66 Mbps cell manufactures extra queue-drop that UDP cannot recover,
+amplified ~32× per object. **Loss recovery — not the stream abstraction itself — is the separator**,
+since stream-less TCP matches QUIC.
 
 **Why MQTT cannot close the gap — three named mechanisms** (verified against MQTT v5.0; see
 `mqtt-vs-moq.md`):
@@ -143,6 +161,15 @@ traffic — and only that, and only in the urban scenario.**
 **Urban:** MoQ delivers BBox at **33 ms with 0.2% deadline miss and full delivery**, while PCloud
 is **sacrificed** (21.6% delivered, missing its own deadline 99.6% of the time). Right trade for
 collision warning; wrong trade for HD-map upload.
+
+**What this claim is, precisely: MoQ *directs* the unavoidable loss by policy — it does not serve
+the workload.** The link is over capacity for both tracks, so no configuration serves both; every
+window that protects BBox starves PCloud (PCloud misses its 500 ms deadline ~99% of the time
+wherever BBox is safe — see `moq-operating-envelope.md`). MoQ's contribution is that the *operator*,
+not the queue mechanics, decides which track survives contention: the safety stream is protected and
+the bulk degrades gracefully and controllably — where TCP head-of-line-blocks both and a deep-buffer
+QUIC drowns the safety stream. A workload that needs the full point cloud *on time* is not served by
+a better protocol; it needs more capacity (spectrum, fewer subscribers, or a lower bulk rate).
 
 **Highway: MoQ no longer meets the deadline** (97 ± 24 ms mean, but **18.2% miss**). The ordering
 is unchanged — MoQ is still 85× faster than MQTT/QUIC — but the 100 ms target is not reliably met.
@@ -179,6 +206,38 @@ having none.
 
 **So: the window protects the latency-critical track; the delivery timeout bounds staleness under
 overload.** Two distinct contributions, and they should be reported as such.
+
+## RQ3 (extended) — Does MoQ's priority hold as load scales across publishers?
+
+The single-publisher setup is the most favourable case for MoQ's priority, whose scope is one
+sender's streams (draft §7). To test how far it generalises, cars 0..N−1 each publish their own
+BBox + PCloud (N = 1..4) at the 128 kB operating point (urban), the remaining cars subscribe to all
+of them, and the run is repeated under QUIC's default **round-robin** scheduler and our
+**PriorityScheduler**. 5 seeds; all runs passed the gate.
+
+| publishers | round-robin BBox lat / miss | priority BBox lat / miss |
+|---|---|---|
+| 1 | 47 ± 2 ms / 0.8% | 47 ± 2 ms / 0.8% |
+| 2 | 129 ± 10 ms / 48% | 83 ± 32 ms / 33% |
+| 3 | 347 ± 37 ms / 83% | 118 ± 10 ms / 51% |
+| 4 | 538 ± 147 ms / 87% | 178 ± 74 ms / 55% |
+
+1. **The safety track degrades super-linearly with publisher count.** Going 1→4 publishers (4×
+   offered safety load) drives round-robin BBox latency 47→538 ms (~11×) and miss 0.8→87%. Each new
+   publisher adds two streams; the 50 B BBox waits behind more 37.5 KB PCloud per round, and because
+   the connection is throughput-capped the backlogs compound rather than merely add.
+2. **The PriorityScheduler does real work** — it roughly halves both latency and miss at every N ≥ 2
+   (at 4 publishers, 178 vs 538 ms and 55% vs 87%). At N = 1 the two schedulers are identical,
+   because a shallow 128 kB queue already delivers BBox on time regardless of order — consistent with
+   the operating-envelope finding that at the BDP the *window*, not the scheduler, does the work.
+3. **But priority does not rescue the safety track at scale.** Even with it, four publishers miss
+   55% of BBox deadlines. Priority reorders streams *within* one publisher's connection; it cannot
+   arbitrate *between* publishers, which are separate MoQ sessions (draft §7) competing for the radio
+   through the 5G MAC scheduler — and the MAC is unaware of MoQ priority.
+
+This **measures** the caveat that the single-publisher topology flatters MoQ: MoQ's priority is most
+effective with one sender and erodes as the safety-critical load spreads across radio-independent
+publishers. (Urban, 128 kB, single scenario. Chart 8; `topology-and-priority-scope.md`.)
 
 ## 5. Threats to validity
 
@@ -247,7 +306,7 @@ results if any run fails either.
 ## 7. Reproducing
 
 ```
-./scripts/run-all.sh results 8      # build, both scenarios x 8 seeds, sweep, verify, report
+./scripts/run-all.sh results 5      # build, both scenarios x 5 seeds, sweep, verify, report
 ```
 Runs are executed in parallel (default: half the cores); 56 runs take ~28 min on 32 cores.
 

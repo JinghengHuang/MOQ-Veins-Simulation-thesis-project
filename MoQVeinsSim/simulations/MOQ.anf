@@ -6,6 +6,8 @@
         <input pattern="results/highway/**/*.sca"/>
         <input pattern="results/highway/**/*.vec"/>
         <input pattern="results/sweep/*.sca"/>
+        <input pattern="results/pubscale/**/*.sca"/>
+        <input pattern="results/bdp300/**/*.sca"/>
     </inputs>
     <charts>
         <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000001" name="RQ2_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
@@ -42,7 +44,7 @@ def load(metric_filter):
     df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
     if df.empty:
         raise chart.ChartScriptError(
-            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+            "No data. Generate it with:  ./scripts/run-all.sh results 5")
     df = df[df["value"].notna()]
     # Split the scenario out of the config name.
     df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
@@ -105,7 +107,7 @@ utils.preconfigure_plot(props)
 per_run = load('name =~ "track*BBox*meanLatency*"')
 # The deadline is the thing that matters, so draw it -- on every panel (hline= inside grouped_bar).
 agg = grouped_bar(per_run, "BBox mean end-to-end latency (ms)  [log scale]",
-                  "Safety-critical track: latency by protocol (mean of 8 seeds, 95% CI)",
+                  "Safety-critical track: latency by protocol (mean of 5 seeds, 95% CI)",
                   scale=1000, logy=True, hline=100, hline_label="100 ms deadline")
 
 utils.postconfigure_plot(props)
@@ -148,7 +150,7 @@ def load(metric_filter):
     df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
     if df.empty:
         raise chart.ChartScriptError(
-            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+            "No data. Generate it with:  ./scripts/run-all.sh results 5")
     df = df[df["value"].notna()]
     # Split the scenario out of the config name.
     df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
@@ -253,7 +255,7 @@ def load(metric_filter):
     df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
     if df.empty:
         raise chart.ChartScriptError(
-            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+            "No data. Generate it with:  ./scripts/run-all.sh results 5")
     df = df[df["value"].notna()]
     # Split the scenario out of the config name.
     df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
@@ -358,7 +360,7 @@ def load(metric_filter):
     df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
     if df.empty:
         raise chart.ChartScriptError(
-            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+            "No data. Generate it with:  ./scripts/run-all.sh results 5")
     df = df[df["value"].notna()]
     # Split the scenario out of the config name.
     df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
@@ -464,7 +466,7 @@ def load(metric_filter):
     df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
     if df.empty:
         raise chart.ChartScriptError(
-            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+            "No data. Generate it with:  ./scripts/run-all.sh results 5")
     df = df[df["value"].notna()]
     # Split the scenario out of the config name.
     df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
@@ -597,7 +599,7 @@ def load(metric_filter):
     df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
     if df.empty:
         raise chart.ChartScriptError(
-            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+            "No data. Generate it with:  ./scripts/run-all.sh results 5")
     df = df[df["value"].notna()]
     # Split the scenario out of the config name.
     df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
@@ -727,7 +729,7 @@ def load(metric_filter):
     df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
     if df.empty:
         raise chart.ChartScriptError(
-            "No data. Generate it with:  ./scripts/run-all.sh results 8")
+            "No data. Generate it with:  ./scripts/run-all.sh results 5")
     df = df[df["value"].notna()]
     # Split the scenario out of the config name.
     df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
@@ -825,6 +827,499 @@ utils.export_image_if_needed(props)
 utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Safety track (BBox): latency distribution (urban)"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000008" name="PubScale_BBox_vs_publishers" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import re
+
+# Publisher-count sweep at CONSTANT offered load (scripts/run-pubscale.sh -> results/pubscale/).
+# Configs PubScale_N{1..4} run QUIC's default round-robin scheduler; PubScale_N{1..4}_Prio run the
+# transport PriorityScheduler. Total load is held fixed across N (each publisher's PCloud is scaled
+# 64000/N B), so the ONLY thing that changes is how many publishers -- i.e. streams (2N) -- share
+# each subscriber's one downlink connection. The question: does spreading the same load across more
+# senders degrade the safety-critical BBox track, and does enforcing MoQ priority in the transport
+# fix it? Metrics are read over RECEIVED objects (deadlineMissRatio, meanLatency), so the staggered
+# SUMO-join offset -- identical across every config -- does not bias the comparison.
+
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def parse_cfg(name):
+    m = re.match(r"PubScale_N(\d+)(_Prio)?$", str(name))
+    if not m:
+        return (np.nan, None)
+    return (int(m.group(1)), "Priority" if m.group(2) else "Round-robin")
+
+def load(metric_filter):
+    """One row per (scheduler, N, seed): mean over the 4 subscriber cars, then across seeds."""
+    df = results.get_scalars(metric_filter, include_itervars=True, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No pubscale data. Generate it with:  ./scripts/run-pubscale.sh results/pubscale 5")
+    df = df[df["value"].notna()].copy()
+    parsed = df["configname"].map(parse_cfg)
+    df["N"] = [p[0] for p in parsed]
+    df["sched"] = [p[1] for p in parsed]
+    df = df[df["N"].notna()]
+    per_run = df.groupby(["sched", "N", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["sched", "N"])["value"].agg(["mean", ci95]).reset_index()
+    agg.columns = ["sched", "N", "mean", "ci"]
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+miss = load('name =~ "track*BBox*deadlineMissRatio*"')
+lat  = load('name =~ "track*BBox*meanLatency*"')
+
+STYLE = {"Round-robin": ("#c05621", "o", "-"), "Priority": ("#2b6cb0", "s", "-")}
+
+fig = plt.gcf()
+fig.clear()
+fig.set_layout_engine("compressed")
+fig.set_size_inches(12, 5)
+ax_miss, ax_lat = fig.subplots(1, 2)
+
+for sched, (colour, marker, ls) in STYLE.items():
+    d = miss[miss["sched"] == sched].sort_values("N")
+    if not d.empty:
+        ax_miss.errorbar(d["N"], d["mean"] * 100, yerr=d["ci"] * 100, color=colour,
+                         marker=marker, linestyle=ls, capsize=3, label=sched)
+    e = lat[lat["sched"] == sched].sort_values("N")
+    if not e.empty:
+        ax_lat.errorbar(e["N"], e["mean"] * 1000, yerr=e["ci"] * 1000, color=colour,
+                        marker=marker, linestyle=ls, capsize=3, label=sched)
+
+ax_miss.set_xlabel("Publishers (streams per subscriber connection = 2N)")
+ax_miss.set_ylabel("BBox deadline-miss ratio (%)")
+ax_miss.set_title("Safety track missed deadlines")
+ax_miss.set_xticks([1, 2, 3, 4]); ax_miss.set_ylim(0, 100)
+ax_miss.grid(alpha=0.3); ax_miss.legend()
+
+ax_lat.axhline(100, color="crimson", linestyle="--", linewidth=1.2)
+ax_lat.annotate("100 ms deadline", xy=(1, 100), xytext=(3, 4), textcoords="offset points",
+                color="crimson", fontsize=9)
+ax_lat.set_xlabel("Publishers (streams per subscriber connection = 2N)")
+ax_lat.set_ylabel("BBox mean end-to-end latency (ms)")
+ax_lat.set_title("Safety track latency")
+ax_lat.set_xticks([1, 2, 3, 4])
+ax_lat.grid(alpha=0.3); ax_lat.legend()
+
+fig.suptitle("BBox vs publisher count at constant load: priority recovers most, but not all, of "
+             "the fan-in penalty")
+
+# Export a tidy table (both metrics side by side) if the chart is configured to.
+out = miss.rename(columns={"mean": "miss", "ci": "miss_ci"}).merge(
+    lat.rename(columns={"mean": "meanLat_s", "ci": "lat_ci"}), on=["sched", "N"])
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(out, props)
+]]></script>
+            <property name="Graph.Title" value="Publisher-count sweep (constant load): BBox deadline-miss and latency, round-robin vs priority scheduler"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000009" name="RQ3_window_effect_all" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Effect of the QUIC flow-control window on BOTH tracks, across three metrics
+# (latency, deadline-miss, throughput). Data: the MOQ_Partial_Window / MOQ_SW_Window
+# sweeps (win = 64kB..2MB) in results/sweep. The window is swept toward the bandwidth-delay
+# product (~75kB); 128kB is the chosen operating point (findings/moq-operating-envelope.md).
+# Windows of ~300kB or more can hold a whole 300KB PCloud frame downstream, which is exactly
+# where bufferbloat returns and the safety track's deadline breaks.
+
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def to_bytes(w):
+    w = str(w).strip()
+    if w.endswith("MB"): return float(w[:-2]) * 1e6
+    if w.endswith("kB"): return float(w[:-2]) * 1e3
+    return float(w)
+
+def load(track, metric):
+    df = results.get_scalars(
+        f'name =~ "*{track}*{metric}*" AND runattr:configname =~ "MOQ_*_Window"',
+        include_itervars=True, include_runattrs=True)
+    if df.empty:
+        return pd.DataFrame(columns=["configname", "window", "mean", "ci"])
+    df = df[df["value"].notna()]
+    # Subscriber cars only: the publisher (car[0]) also records a track scalar, and for
+    # throughput that is the SENT rate -- averaging it in would blend sent with received.
+    df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]
+    df["window"] = df["win"].map(to_bytes) / 1e3   # kB
+    per_run = df.groupby(["configname", "window", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["configname", "window"])["value"].agg(["mean", ci95]).reset_index()
+    agg.columns = ["configname", "window", "mean", "ci"]
+    return agg
+
+SERIES = [("MOQ_Partial_Window", "MoQ partial (shedding)",     "#2b6cb0", "-o"),
+          ("MOQ_SW_Window",      "MoQ reliable (no shedding)",  "#c05621", "--s")]
+
+# (row, col, track, metric, scale, ylabel, logy, deadline_ms)
+PANELS = [
+    (0, 0, "BBox",   "meanLatency",       1000, "latency (ms)  [log]", True,  100),
+    (0, 1, "BBox",   "deadlineMissRatio", 100,  "deadline-miss (%)",   False, None),
+    (0, 2, "BBox",   "throughput",        1e-3, "throughput (kbps)",   False, None),
+    (1, 0, "PCloud", "meanLatency",       1000, "latency (ms)  [log]", True,  500),
+    (1, 1, "PCloud", "deadlineMissRatio", 100,  "deadline-miss (%)",   False, None),
+    (1, 2, "PCloud", "throughput",        1e-6, "throughput (Mbps)",   False, None),
+]
+WINDOWS = [64, 128, 256, 512, 1000, 2000]
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+fig = plt.gcf()
+fig.clear()
+fig.set_layout_engine("compressed")
+fig.set_size_inches(14, 8)
+axes = fig.subplots(2, 3, squeeze=False)
+
+export_rows = []
+for (r, c, track, metric, scale, ylabel, logy, deadline) in PANELS:
+    ax = axes[r][c]
+    agg = load(track, metric)
+    if not agg.empty:
+        a = agg.copy(); a["track"] = track; a["metric"] = metric
+        export_rows.append(a)
+    for cfg, label, colour, style in SERIES:
+        d = agg[agg["configname"] == cfg].sort_values("window")
+        if d.empty:
+            continue
+        ax.errorbar(d["window"], d["mean"] * scale, yerr=d["ci"] * scale, fmt=style,
+                    color=colour, label=label, capsize=3, markersize=6)
+    # Operating point (128kB) and the "holds a full 300KB frame" danger band.
+    ax.axvspan(300, 4000, color="#c53030", alpha=0.06)
+    ax.axvline(128, color="#2f855a", linewidth=1.3)
+    if deadline is not None:
+        ax.axhline(deadline, color="crimson", linestyle="--", linewidth=1.0)
+    ax.set_xscale("log")
+    ax.set_xticks(WINDOWS)
+    ax.set_xticklabels([str(w) for w in WINDOWS], fontsize=8)
+    ax.set_xlim(55, 2600)
+    if logy:
+        ax.set_yscale("log")
+    if metric == "deadlineMissRatio":
+        ax.set_ylim(-3, 103)
+    ax.set_title("%s: %s" % (track, metric), fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=9)
+    ax.grid(alpha=0.3, which="both")
+    if r == 1:
+        ax.set_xlabel("QUIC flow-control window (kB)  [log]", fontsize=9)
+
+# Legend in the top-right panel (BBox throughput is a near-flat line, so there is room).
+axes[0][2].legend(loc="upper right", fontsize=8, framealpha=0.9)
+fig.suptitle("Effect of the QUIC flow-control window on both tracks (urban, single seed).  "
+             "Green = 128 kB operating point;  red band = window holds a full 300 KB frame",
+             fontsize=12)
+
+combined = pd.concat(export_rows, ignore_index=True) if export_rows else pd.DataFrame()
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(combined, props)
+]]></script>
+            <property name="Graph.Title" value="Window sweep: effect on latency, deadline-miss and throughput for both tracks"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000010" name="RQ2_latency_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Both tracks (BBox + PCloud), one metric, all protocols, faceted by scenario. Companion to the
+# per-track RQ2 charts: this view puts the two tracks side by side per protocol so the safety vs
+# bulk contrast is visible at a glance (e.g. TCP's BBox latency == its PCloud latency = HOL blocking).
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {"MOQ_Partial_BDP": "MoQ partial\n(128kB)", "MOQ_SW_BDP": "MoQ reliable\n(128kB)",
+         "MOQ_QUIC": "MoQ / QUIC\n(default)", "MQTT_QUIC": "MQTT / QUIC", "MOQ_UDP": "MoQ / UDP",
+         "MOQ_TCP": "MoQ / TCP", "MQTT_TCP": "MQTT / TCP"}
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+def ci95(x):
+    x = x.dropna(); n = len(x)
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n) if n >= 2 else 0.0
+
+def load_metric(track, metric):
+    df = results.get_scalars('name =~ "*%s*%s*"' % (track, metric),
+                             include_itervars=True, include_runattrs=True)
+    if df.empty:
+        return pd.DataFrame(columns=["config", "scenario", "mean", "ci"])
+    df = df[df["value"].notna()]
+    df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]   # subscribers only
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True).replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95]).reset_index()
+    agg.columns = ["config", "scenario", "mean", "ci"]
+    return agg
+
+def two_track_bars(metric, ylabel, title, scale=1.0, logy=False, ylim=None):
+    aggs = {tr: load_metric(tr, metric) for tr in ("BBox", "PCloud")}
+    present = set().union(*[set(a["config"]) for a in aggs.values()])
+    cfgs = [c for c in ORDER if c in present]
+    scen_present = set().union(*[set(a["scenario"]) for a in aggs.values()])
+    scenarios = [s for s in ("urban", "highway") if s in scen_present]
+    if not cfgs or not scenarios:
+        raise chart.ChartScriptError("No comparison data. Run scripts/run-comparison.sh.")
+    x = np.arange(len(cfgs)); width = 0.38
+    fig = plt.gcf(); fig.clear(); fig.set_layout_engine("compressed"); fig.set_size_inches(14, 5.5)
+    axes = fig.subplots(1, len(scenarios), sharey=True, squeeze=False)[0]
+    for ax, scen in zip(axes, scenarios):
+        for i, (tr, colour) in enumerate([("BBox", "#2b6cb0"), ("PCloud", "#c05621")]):
+            d = aggs[tr]; d = d[d["scenario"] == scen].set_index("config").reindex(cfgs)
+            ax.bar(x + (i - 0.5) * width, d["mean"] * scale, width, yerr=d["ci"] * scale,
+                   capsize=3, label=tr, color=colour, alpha=0.85)
+        ax.set_xticks(x); ax.set_xticklabels([LABEL.get(c, c) for c in cfgs], fontsize=8)
+        ax.set_title(scen, fontsize=11); ax.grid(axis="y", alpha=0.3)
+        if logy:
+            ax.set_yscale("log")
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+    axes[0].set_ylabel(ylabel); axes[0].legend(title="track", fontsize=9)
+    fig.suptitle(title)
+    return pd.concat([aggs[tr].assign(track=tr) for tr in aggs], ignore_index=True)
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+combined = two_track_bars("meanLatency", "end-to-end latency (ms)  [log]",
+                          "Latency by protocol, both tracks (mean of seeds, 95% CI)",
+                          scale=1000, logy=True)
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(combined, props)
+]]></script>
+            <property name="Graph.Title" value="Latency by protocol (both tracks): TCP's BBox moves at its PCloud's pace (HOL); QUIC decouples them"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000011" name="RQ2_deadline_miss_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {"MOQ_Partial_BDP": "MoQ partial\n(128kB)", "MOQ_SW_BDP": "MoQ reliable\n(128kB)",
+         "MOQ_QUIC": "MoQ / QUIC\n(default)", "MQTT_QUIC": "MQTT / QUIC", "MOQ_UDP": "MoQ / UDP",
+         "MOQ_TCP": "MoQ / TCP", "MQTT_TCP": "MQTT / TCP"}
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+def ci95(x):
+    x = x.dropna(); n = len(x)
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n) if n >= 2 else 0.0
+
+def load_metric(track, metric):
+    df = results.get_scalars('name =~ "*%s*%s*"' % (track, metric),
+                             include_itervars=True, include_runattrs=True)
+    if df.empty:
+        return pd.DataFrame(columns=["config", "scenario", "mean", "ci"])
+    df = df[df["value"].notna()]
+    df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True).replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95]).reset_index()
+    agg.columns = ["config", "scenario", "mean", "ci"]
+    return agg
+
+def two_track_bars(metric, ylabel, title, scale=1.0, logy=False, ylim=None):
+    aggs = {tr: load_metric(tr, metric) for tr in ("BBox", "PCloud")}
+    present = set().union(*[set(a["config"]) for a in aggs.values()])
+    cfgs = [c for c in ORDER if c in present]
+    scen_present = set().union(*[set(a["scenario"]) for a in aggs.values()])
+    scenarios = [s for s in ("urban", "highway") if s in scen_present]
+    if not cfgs or not scenarios:
+        raise chart.ChartScriptError("No comparison data. Run scripts/run-comparison.sh.")
+    x = np.arange(len(cfgs)); width = 0.38
+    fig = plt.gcf(); fig.clear(); fig.set_layout_engine("compressed"); fig.set_size_inches(14, 5.5)
+    axes = fig.subplots(1, len(scenarios), sharey=True, squeeze=False)[0]
+    for ax, scen in zip(axes, scenarios):
+        for i, (tr, colour) in enumerate([("BBox", "#2b6cb0"), ("PCloud", "#c05621")]):
+            d = aggs[tr]; d = d[d["scenario"] == scen].set_index("config").reindex(cfgs)
+            ax.bar(x + (i - 0.5) * width, d["mean"] * scale, width, yerr=d["ci"] * scale,
+                   capsize=3, label=tr, color=colour, alpha=0.85)
+        ax.set_xticks(x); ax.set_xticklabels([LABEL.get(c, c) for c in cfgs], fontsize=8)
+        ax.set_title(scen, fontsize=11); ax.grid(axis="y", alpha=0.3)
+        if logy:
+            ax.set_yscale("log")
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+    axes[0].set_ylabel(ylabel); axes[0].legend(title="track", fontsize=9)
+    fig.suptitle(title)
+    return pd.concat([aggs[tr].assign(track=tr) for tr in aggs], ignore_index=True)
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+combined = two_track_bars("deadlineMissRatio", "deadline-miss ratio (%)",
+                          "Deadline-miss by protocol, both tracks (mean of seeds, 95% CI)",
+                          scale=100, ylim=(0, 105))
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(combined, props)
+]]></script>
+            <property name="Graph.Title" value="Deadline-miss by protocol (both tracks)"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000012" name="RQ2_throughput_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LABEL = {"MOQ_Partial_BDP": "MoQ partial\n(128kB)", "MOQ_SW_BDP": "MoQ reliable\n(128kB)",
+         "MOQ_QUIC": "MoQ / QUIC\n(default)", "MQTT_QUIC": "MQTT / QUIC", "MOQ_UDP": "MoQ / UDP",
+         "MOQ_TCP": "MoQ / TCP", "MQTT_TCP": "MQTT / TCP"}
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+def ci95(x):
+    x = x.dropna(); n = len(x)
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n) if n >= 2 else 0.0
+
+def load_metric(track, metric):
+    df = results.get_scalars('name =~ "*%s*%s*"' % (track, metric),
+                             include_itervars=True, include_runattrs=True)
+    if df.empty:
+        return pd.DataFrame(columns=["config", "scenario", "mean", "ci"])
+    df = df[df["value"].notna()]
+    df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True).replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    per_run = df.groupby(["config", "scenario", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["config", "scenario"])["value"].agg(["mean", ci95]).reset_index()
+    agg.columns = ["config", "scenario", "mean", "ci"]
+    return agg
+
+def two_track_bars(metric, ylabel, title, scale=1.0, logy=False, ylim=None):
+    aggs = {tr: load_metric(tr, metric) for tr in ("BBox", "PCloud")}
+    present = set().union(*[set(a["config"]) for a in aggs.values()])
+    cfgs = [c for c in ORDER if c in present]
+    scen_present = set().union(*[set(a["scenario"]) for a in aggs.values()])
+    scenarios = [s for s in ("urban", "highway") if s in scen_present]
+    if not cfgs or not scenarios:
+        raise chart.ChartScriptError("No comparison data. Run scripts/run-comparison.sh.")
+    x = np.arange(len(cfgs)); width = 0.38
+    fig = plt.gcf(); fig.clear(); fig.set_layout_engine("compressed"); fig.set_size_inches(14, 5.5)
+    axes = fig.subplots(1, len(scenarios), sharey=True, squeeze=False)[0]
+    for ax, scen in zip(axes, scenarios):
+        for i, (tr, colour) in enumerate([("BBox", "#2b6cb0"), ("PCloud", "#c05621")]):
+            d = aggs[tr]; d = d[d["scenario"] == scen].set_index("config").reindex(cfgs)
+            ax.bar(x + (i - 0.5) * width, d["mean"] * scale, width, yerr=d["ci"] * scale,
+                   capsize=3, label=tr, color=colour, alpha=0.85)
+        ax.set_xticks(x); ax.set_xticklabels([LABEL.get(c, c) for c in cfgs], fontsize=8)
+        ax.set_title(scen, fontsize=11); ax.grid(axis="y", alpha=0.3)
+        if logy:
+            ax.set_yscale("log")
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+    axes[0].set_ylabel(ylabel); axes[0].legend(title="track", fontsize=9)
+    fig.suptitle(title)
+    return pd.concat([aggs[tr].assign(track=tr) for tr in aggs], ignore_index=True)
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+# BBox is a 50 B/100 ms track (~4 kbps) and PCloud is the 300 KB/200 ms bulk (Mbps), so goodput
+# spans ~3 orders of magnitude -- log y keeps both visible (BBox low, PCloud high).
+combined = two_track_bars("throughput", "goodput (Mbps)  [log]",
+                          "Throughput by protocol, both tracks (mean of seeds, 95% CI)",
+                          scale=1e-6, logy=True)
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(combined, props)
+]]></script>
+            <property name="Graph.Title" value="Throughput by protocol (both tracks)"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000013" name="OpPoint_128_vs_300" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Operating-point comparison: CANONICAL 128kB (results/{urban,highway}) vs the TESTED-AND-REJECTED
+# 300kB (results/bdp300), both 5 seeds. 300kB was tried because it delivers more bulk; the multi-seed
+# data shows it breaks the safety deadline (urban ~9.5% miss vs 0.2%) with large variance, because
+# 300kB sits one step below the ~350kB latency knee and fading tips some seeds over. This chart is
+# the evidence behind "we tested a larger window and 128kB is still better."
+CFGS = ["MOQ_Partial_BDP", "MOQ_Partial_BDP_300", "MOQ_SW_BDP", "MOQ_SW_BDP_300"]
+TYPES = [("MOQ_Partial_BDP", "MOQ_Partial_BDP_300", "MoQ partial"),
+         ("MOQ_SW_BDP", "MOQ_SW_BDP_300", "MoQ reliable")]
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+def ci95(x):
+    x = x.dropna(); n = len(x)
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n) if n >= 2 else 0.0
+
+def load(track, metric):
+    df = results.get_scalars('name =~ "*%s*%s*"' % (track, metric), include_runattrs=True)
+    if df.empty:
+        return pd.DataFrame(columns=["cfg", "scenario", "mean", "ci"])
+    df = df[df["value"].notna()]
+    df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["cfg"] = df["configname"].str.replace("_HW$", "", regex=True)
+    df = df[df["cfg"].isin(CFGS)]
+    per_run = df.groupby(["cfg", "scenario", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["cfg", "scenario"])["value"].agg(["mean", ci95]).reset_index()
+    agg.columns = ["cfg", "scenario", "mean", "ci"]
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+fig = plt.gcf(); fig.clear(); fig.set_layout_engine("compressed"); fig.set_size_inches(13, 9)
+scenarios = ["urban", "highway"]
+ROWS = [("BBox", "deadlineMissRatio", "BBox deadline-miss (%)", 100.0, True),
+        ("PCloud", "throughput", "PCloud goodput (Mbps)", 1e-6, False)]
+axes = fig.subplots(2, 2, squeeze=False)
+WINS = [("128kB", "#2f855a"), ("300kB", "#c05621")]   # 128 = green (keep), 300 = red (rejected)
+export = []
+for r, (track, metric, ylabel, scale, floor0) in enumerate(ROWS):
+    agg = load(track, metric)
+    e = agg.copy(); e["track"] = track; e["metric"] = metric; export.append(e)
+    for c, scen in enumerate(scenarios):
+        ax = axes[r][c]
+        xw = np.arange(len(TYPES)); width = 0.38
+        for wi, (win, col) in enumerate(WINS):
+            vals, errs = [], []
+            for (c128, c300, _lab) in TYPES:
+                cfg = c128 if win == "128kB" else c300
+                d = agg[(agg["cfg"] == cfg) & (agg["scenario"] == scen)]
+                vals.append(d["mean"].iloc[0] * scale if len(d) else np.nan)
+                errs.append(d["ci"].iloc[0] * scale if len(d) else 0.0)
+            ax.bar(xw + (wi - 0.5) * width, vals, width, yerr=errs, capsize=3,
+                   label=win, color=col, alpha=0.9)
+        ax.set_xticks(xw); ax.set_xticklabels([t[2] for t in TYPES], fontsize=10)
+        ax.grid(axis="y", alpha=0.3)
+        if floor0:
+            ax.set_ylim(bottom=0)
+        if r == 0:
+            ax.set_title(scen, fontsize=12)
+        if c == 0:
+            ax.set_ylabel(ylabel, fontsize=10)
+axes[0][0].legend(title="window", fontsize=10)
+fig.suptitle("Operating point: 128kB (canonical) vs 300kB (tested, rejected).  "
+             "Top row: 300kB misses far more BBox deadlines.  Bottom row: 300kB's only gain is bulk goodput.",
+             fontsize=12)
+combined = pd.concat(export, ignore_index=True)
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(combined, props)
+]]></script>
+            <property name="Graph.Title" value="Operating point: 128kB canonical vs 300kB tested-and-rejected (safety cost vs bulk benefit)"/>
         </chart>
     </charts>
 </analysis>

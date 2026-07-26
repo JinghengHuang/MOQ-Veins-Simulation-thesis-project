@@ -159,10 +159,10 @@ from latency/miss — **survivor bias**, silently flattering TCP/UDP.
 The channel model has log-normal shadowing and Jakes fading, and vehicles hand over mid-run.
 Single runs cannot support a claim.
 
-- **Effect:** with n=1 we credited delivery-timeout shedding for the deadline result. With 8 seeds
+- **Effect:** with n=1 we credited delivery-timeout shedding for the deadline result. With 5 seeds
   and CIs, shedding and the reliable baseline are **statistically indistinguishable** on the safety
   track (33 ± 3 ms / 0.2 ± 0.4% vs 39 ± 8 ms / 0.8 ± 1.5%). The conclusion was wrong.
-- **Fixed:** `01b7e11` — all headline results are 8 seeds, mean ± 95% CI.
+- **Fixed:** `01b7e11` — all headline results are 5 seeds, mean ± 95% CI.
 
 ### A3.4 Scenario named "Highway" was an urban grid
 The network was called `Highway` but the SUMO scenario was a 3×3 grid with 200 m edges at 50 km/h.
@@ -184,10 +184,11 @@ What the study does **not** establish. These belong in a Threats to Validity sec
 | limit | detail |
 |---|---|
 | **The headline deadline result is urban-only** | MoQ meets the 100 ms safety deadline in the urban grid (33 ± 3 ms, 0.2% miss) but **not on the highway** (97 ± 24 ms, **18.2% miss**). The protocol *ordering* holds in both; the absolute claim does not. This is the single most important caveat. |
+| **The bulk track is sacrificed, not served** | Protecting BBox necessarily starves PCloud: at the operating window MoQ delivers only ~23% of PCloud, and PCloud misses its own 500 ms deadline ~99% of the time at **every** window where BBox is safe — the link is over capacity for *both* tracks, so no configuration serves both. MoQ's value is therefore **directing the unavoidable loss by policy** (safety protected, bulk degraded gracefully and controllably), *not* serving the workload — where TCP HOL-blocks both and a deep-buffer QUIC drowns the safety stream. Right for a safety stream + degradable bulk; a use case needing the full point cloud *on time* needs more capacity (spectrum, fewer subscribers, lower bulk rate), not a better protocol. See [`moq-operating-envelope.md`](moq-operating-envelope.md). |
 | **Two scenarios, both synthetic** | 8 vehicles each. No dense-traffic, multi-cell, or mixed-mobility case. |
 | **One workload shape** | One publisher, two tracks (small/critical + bulk). The RQ3 claim rests on this being representative of the pattern it describes. |
-| **Single publisher flatters MoQ** | MoQ's priority is session-scoped (draft §7), so it arbitrates only between one sender's streams. With one publisher that suffices; in a fleet, contention is *between* vehicles and is resolved by the 5G MAC scheduler, which is unaware of MoQ priorities. **The evaluated topology is the most favourable case for MoQ's priority mechanism.** Reasoned, not measured — see [`topology-and-priority-scope.md`](topology-and-priority-scope.md). |
-| **Load scaling untested** | `MOQ_Partial_MultiPub` (3 publishers) is implemented but **never run**. |
+| **Single publisher flatters MoQ (now measured)** | MoQ's priority is session-scoped (draft §7), so it arbitrates only between one sender's streams. With one publisher that suffices; in a fleet, contention is *between* vehicles and is resolved by the 5G MAC scheduler, which is unaware of MoQ priorities. **The evaluated topology is the most favourable case for MoQ's priority mechanism** — and the multi-publisher runs confirm it: at 4 publishers the safety track misses **55% of deadlines even with the priority scheduler** (87% without). Priority halves the degradation but cannot arbitrate across radio-independent senders. See the REPORT "RQ3 (extended)" section and [`topology-and-priority-scope.md`](topology-and-priority-scope.md). |
+| **Load scaling: measured to 4 publishers, urban only** | `PubScale_N{1..4}` (round-robin and priority, 5 seeds each) were run — BBox degrades super-linearly with publisher count (Chart 8). Still a limit: single scenario (urban), single window (128 kB), and only up to 4 publishers. |
 | **MQTT at QoS 0 only** | QoS 1 and 2 unmeasured. Defensible — over TCP, QoS 0 already inherits reliable delivery, and QoS 2's four-way handshake is not used in V2X telemetry — but it is a scope limit, not a result. |
 | **Window sweep is single-seed** | The 128 kB operating point, which every tuned result depends on, is asserted from one run per window. Endpoints (2 MB vs 64–128 kB) differ by an order of magnitude and are safe; the 512 kB–1 MB transition region is noisy, non-monotonic, and **no claim is made about it**. |
 
@@ -209,6 +210,7 @@ What the study does **not** establish. These belong in a Threats to Validity sec
 | **No D2D/sidelink** | Pure V2I over Uu. |
 | **`fcsMode`/`crcMode = "declared"`** | No bit-error corruption is computed; frames are marked correct/incorrect analytically (standard INET practice). |
 | **Delivery ceiling ≈ 62% (urban)** | Subscriber cars spawn mid-run and cannot receive objects published before they existed. **Compare configs against each other, not against 100%.** |
+| **Highway tail: far-end coverage collapse + handover ping-pong** | Past gNodeB2 a vehicle's SINR falls toward the noise floor and the serving cell oscillates between the two gNodeBs (~23 switches/run; confirmed by a `servingCell`/SINR trace, seed 0). This is load-bearing on connection-oriented transports specifically: the single publisher's *uplink* QUIC connection stalls when it enters this region (~48.5 s), starving **all** subscribers at once, whereas connectionless UDP trickles on. Read highway results as a good-coverage window plus a coverage-loss tail — the tail reflects handover instability, not steady behaviour. The *initial* mid-corridor handover succeeds; only the far-end region ping-pongs. Not a UDP-vs-QUIC confound (it truncates QUIC's window yet QUIC still wins). |
 
 ## B4. Protocol-fidelity gaps (things the spec has that we do not implement)
 
