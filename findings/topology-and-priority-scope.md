@@ -1,114 +1,164 @@
-# Topology scope: why a single publisher flatters MoQ
+# Topology scope: where MoQ's priority has authority, and where it does not
 
-**Status: reasoned, not measured.** No experiment was run for this. It is recorded so the
-limitation is stated deliberately rather than discovered by a reviewer.
+**Status: partly measured.** The publisher-count sweep (`PubScale_N{1..4}[_Prio]`, 5 seeds,
+`results/pubscale/`) has been run and is the evidence for §3–§4. The uplink claim in §5 remains
+**reasoned, not measured** — no experiment isolates it.
+
+> **This document was rewritten after the sweep.** An earlier version claimed that MoQ's priority
+> loses authority as soon as there is more than one publisher. That is wrong, and the measurement
+> says so: at four publishers the priority scheduler cuts BBox latency from 538 ms to 178 ms and
+> triples on-time delivery. The claim has been narrowed to the leg it actually applies to.
 
 ---
 
-## The setup we actually simulated
+## 1. The setup we simulated
 
-One publisher car → edge relay → seven subscriber cars, over 5G NR (Uu). Both tracks (`BBox`,
-`PCloud`) travel **on a single QUIC connection** from the publisher to the relay.
+One or more publisher cars → **edge relay** (`server`, `MoqRelayApp`) → subscriber cars, over 5G NR
+(Uu). This models **edge-assisted offload** — vehicle → edge → vehicles, the EMP (MobiCom '21)
+architecture. It is **not** V2V cooperative perception, where every vehicle both publishes and
+subscribes, and it is not sidelink.
 
-This models **edge-assisted offload** — vehicle → edge → vehicles — which is a legitimate and
-well-cited architecture (EMP, MobiCom '21, is exactly this). It is **not** V2V cooperative
-perception, where every vehicle both publishes and subscribes.
+Two legs, and they are not symmetric:
 
-The single publisher was chosen for simplicity. It is not a neutral choice: **it happens to be the
-case in which MoQ's priority mechanism looks best.**
+| leg | connections | who arbitrates |
+|---|---|---|
+| publisher car → relay (**uplink**) | one QUIC connection *per publisher*, on its own UE | the 5G MAC scheduler, between UEs |
+| relay → subscriber car (**downlink**) | **one** QUIC connection per subscriber, carrying every publisher's tracks | the relay's MoQ session: app-level priority buffer + QUIC stream scheduler |
 
-## The mechanism: MoQ's priority is scoped to a session
+The bottleneck in every configuration we run is the **downlink**: offered load is ~82 Mbps against
+the ~66 Mbps cell ceiling (~1.24×), and each object is fanned out to every subscriber.
 
-The draft is explicit. draft-ietf-moq-transport-14 §7:
+## 2. The mechanism: session scope is per connection, and the relay is one endpoint
+
+The draft is explicit — draft-ietf-moq-transport-14 §7:
 
 > "MoQ priorities allow a subscriber and original publisher to influence the transmission order of
 > Objects **within a session** in the presence of congestion."
 
-And on ordering beyond that scope (§7.2):
+Our implementation matches that scope. `PriorityScheduler` is constructed per QUIC connection and
+arbitrates over that connection's stream map (`inet/transportlayer/quic/Connection.cc:73`).
 
-> "This algorithm does not provide a well-defined ordering for objects that belong to different
-> subscriptions or FETCH responses, but have the same subscriber and publisher priority. The
-> ordering in those cases is implementation-defined."
+**The consequence that the earlier version of this document missed:** "one session" is not the same
+as "one publisher". The relay keeps **one socket per subscriber** (`subscriberSockets[sid]`,
+`MoqRelayApp.cc:220`) and forwards *every* publisher's objects onto streams of that one connection,
+into a send buffer keyed by object priority (`st.buffer[item.priority]`, `MoqRelayApp.cc:517`). So on
+the downlink, all N publishers' BBox and PCloud objects land in a single MoQ session with a single
+scheduler. Cross-publisher arbitration is squarely inside MoQ's scope there, at both the application
+and the transport layer.
 
-Our implementation matches that scope exactly. The `PriorityScheduler` is constructed **per QUIC
-connection** and arbitrates over that connection's stream map
-(`inet/transportlayer/quic/Connection.cc:73`, over `&streamMap`). It can order *this* sender's
-streams against each other. It has no visibility of, and no authority over, any other sender.
+Multiple publishers at the application layer does **not** imply multiple sessions at the bottleneck.
 
-## What that means with one publisher vs many
+## 3. Measured: priority does arbitrate across publishers
 
-**One publisher (what we simulated).** `BBox` and `PCloud` share one QUIC connection, so they are
-streams in the *same* stream map. The priority scheduler can genuinely preempt the bulk track for
-the safety track. The mechanism is fully exercised, and it works — this is why MoQ's send order
-reaches the wire at all.
+`PubScale_N{1..4}` holds total offered load constant (each publisher's PCloud object scaled 64000/N B,
+so every N delivers 2.56 MB/s per subscriber) and varies only the publisher count. Subscribers are
+always cars 4–7, so mobility and handover are identical across N. The `_Prio` variants re-run each
+point with `**.quic.streamScheduler = "Priority"`. 5 seeds; aggregated by
+`scripts/analyze_pubscale.py`.
 
-**Many publishers (not simulated).** Each vehicle opens **its own QUIC connection** to the relay.
-Car A's safety `BBox` and car B's bulk `PCloud` are then in **different stream maps, in different
-connections, on different UEs**. Nothing in MoQ can order one against the other:
+| N | scheduler | BBox on-time | BBox miss | BBox mean latency |
+|---|---|---|---|---|
+| 1 | round-robin | 0.686 ± 0.005 | 0.8% ± 0.7 | 47 ± 2 ms |
+| 2 | round-robin | 0.371 ± 0.043 | 48.5% ± 7.5 | 129 ± 10 ms |
+| 3 | round-robin | 0.141 ± 0.012 | 82.6% ± 1.6 | 347 ± 37 ms |
+| 4 | round-robin | 0.109 ± 0.003 | 87.1% ± 0.5 | 538 ± 147 ms |
+| 1 | **priority** | 0.686 ± 0.005 | 0.8% ± 0.7 | 47 ± 2 ms |
+| 2 | **priority** | 0.452 ± 0.073 | 33.0% ± 21.1 | 83 ± 32 ms |
+| 3 | **priority** | 0.353 ± 0.018 | 51.0% ± 2.3 | 118 ± 9 ms |
+| 4 | **priority** | 0.330 ± 0.034 | 55.3% ± 4.3 | 178 ± 74 ms |
 
-- MoQ's priority is session-scoped, per the quote above.
+(95% CIs over 5 seeds. On-time ratio = (received − misses) / expected; it is the headline because
+miss ratio alone flatters a run that delivered almost nothing. On-time tops out at ~0.69 even at
+N = 1 because subscribers join mid-run — see `ISSUES-AND-LIMITS.md` A2.6.)
+
+**Priority is enforced and effective with multiple publishers.** At N = 4 it holds latency to 178 ms
+where round-robin reaches 538 ms, and it roughly **triples** on-time delivery (0.330 vs 0.109). This
+is the relay ordering four *different vehicles'* safety objects ahead of four different vehicles'
+bulk objects, which is exactly the cross-publisher arbitration the earlier version of this document
+claimed was impossible.
+
+At N = 1 the two schedulers are identical, because a 128 kB (BDP-sized) queue already delivers BBox
+on time regardless of send order — consistent with `moq-operating-envelope.md`: at the BDP the
+*window*, not the scheduler, does the work.
+
+## 4. What is left over, and why it cannot be attributed
+
+Priority recovers most of the fan-in penalty, not all of it. At identical total load, N = 4 with
+priority is still 55% miss / 178 ms against N = 1's 0.8% / 47 ms.
+
+**We cannot say what causes the residual.** The sweep changes two things at once:
+
+1. **streams per downlink connection** (2N) — more streams share one congestion window and one
+   128 kB connection-level flow-control budget, so BBox's share shrinks even when its *order* is
+   right; and
+2. **publisher UEs and uplink connections** (N) — N independent radios contending at the MAC, which
+   is the effect §5 is about.
+
+The config comment in `omnetpp.ini:604` claims "the ONLY thing that changes with N is the number of
+streams multiplexed onto each subscriber's downlink connection." **That is not accurate** — the
+number of uplink connections and transmitting UEs changes with N too. Attributing the residual to
+session scope would be over-reading the data; attributing it to stream dilution would be equally
+unsupported.
+
+## 5. The claim that survives: the uplink leg
+
+**Reasoned, not measured.** On the publisher→relay leg, each vehicle has its own UE and its own QUIC
+connection. Car A's safety BBox and car B's bulk PCloud are then in different stream maps, in
+different connections, on different radios. Nothing in MoQ orders one against the other:
+
+- MoQ's priority is session-scoped, per §7 above.
 - QUIC's priority is per-connection by construction (RFC 9000 §2.3 leaves scheduling to the
-  implementation, and an implementation only schedules the streams of a connection it owns).
-- The arbitration that *actually* happens is in the **5G MAC scheduler**, which allocates resource
-  blocks between UEs and knows nothing about MoQ object priorities.
+  implementation, and an implementation schedules only the streams of a connection it owns).
+- The arbitration that actually happens is in the **5G MAC scheduler**, which allocates resource
+  blocks between UEs and knows nothing of MoQ object priorities.
 
-So in a realistic multi-vehicle deployment, **a vehicle's safety-critical message can queue behind
-another vehicle's point cloud, and MoQ has no mechanism to prevent it.** The protection we measured
-is protection *against your own bulk traffic*, not against the fleet's.
+So a vehicle's safety message can queue behind another vehicle's point cloud *on the way up*, and
+MoQ has no mechanism to prevent it. Closing that requires the network to know the priority — i.e.
+**RAN-level QoS**: mapping the safety track to a distinct 5QI / QoS flow with a guaranteed bit rate.
+That is a 5G mechanism, not a MoQ one, and orthogonal to what this thesis measures.
 
-## Why this is a real limitation, not a modelling artifact
+In our runs this leg is not the bottleneck (the downlink is), so its contribution is expected to be
+small here — which is another reason the §4 residual should not be read as evidence for it.
 
-It is not something a better MoQ implementation could fix. It is a property of where the priority
-mechanism lives: at the application layer, inside one session. Closing it requires the *network* to
-know about the priority — i.e. **RAN-level QoS**: mapping the safety track to a distinct 5QI / QoS
-flow with a guaranteed bit rate, so the MAC scheduler itself favours it. That is a 5G mechanism,
-not a MoQ one, and it is orthogonal to everything this thesis measures.
+## 6. The experiment that would isolate it
 
-This also composes with the other main finding. We showed that the **bounded transport queue**, not
-delivery-timeout shedding, is what buys the deadline. Both of those levers are *per-sender*: each
-vehicle can bound its own queue and shed its own stale objects. Neither helps when the contention
-is *between* vehicles for radio resources. The per-sender levers are necessary but, in a fleet, not
-sufficient.
+Vary stream count **without** varying UE count: one publisher emitting 2N tracks at the same total
+load (`PubScale_T{2,4,6,8}`, say), so the downlink still carries 2N streams but only one radio is
+transmitting.
 
-## What an experiment would look like, if it is ever run
+- If BBox degradation tracks `PubScale_N{1..4}`, the residual is **stream dilution inside the
+  downlink connection**, and the uplink/session-scope story contributes nothing measurable here.
+- If it is materially flatter, the difference is the **inter-UE** effect of §5, and the gap
+  quantifies it.
 
-The existing `MOQ_Partial_MultiPub` config **cannot be used as-is**: it promotes cars 0–2 to
-publishers at the full per-publisher rate, tripling an offered load that already exceeds capacity.
-The result would be a degenerate table in which every protocol misses every deadline — informative
-about nothing.
+That is falsifiable either way, which is the point of writing it down.
 
-The experiment that would isolate the effect is:
+## 7. What to say in the thesis
 
-- **Hold total offered load constant** and vary only how many senders produce it. E.g. 12 Mbps from
-  1 publisher, vs 8 publishers at 1.5 Mbps each, with the same BBox/PCloud split per publisher.
-- The only variable is then **whether contention is within a connection or between connections**.
-- **Prediction (unverified):** BBox deadline-miss rises with publisher count even at constant total
-  load, because MoQ's priority can no longer arbitrate the contention. If BBox performance is
-  roughly flat in publisher count, this reasoning is wrong and the RAN scheduler is doing more work
-  than expected.
-
-That prediction is falsifiable, which is the point of writing it down.
-
-## What to say in the thesis
-
-Minimum (scoping sentence, mandatory):
+Scoping sentence (mandatory):
 
 > This work models edge-assisted offload (vehicle → edge → vehicles), not V2V cooperative
-> perception. All application traffic from a vehicle shares one QUIC connection.
+> perception. A vehicle's application traffic shares one QUIC connection to the relay, and the relay
+> serves each subscriber over a single connection carrying every publisher's tracks.
 
-Recommended (the limitation, stated with its mechanism):
+The result, stated with its scope:
 
-> MoQ's priority is scoped to a session (draft-ietf-moq-transport-14 §7), so it arbitrates between
-> the streams of one sender. With a single publisher — the topology evaluated here — that is
-> sufficient to protect the safety track from the same vehicle's bulk traffic. In a multi-vehicle
-> deployment, contention is between vehicles, resolved by the 5G MAC scheduler, which is unaware of
-> MoQ priorities. MoQ therefore cannot protect one vehicle's safety data from another vehicle's
-> bulk data; doing so would require RAN-level QoS (a distinct 5QI for the safety track). The
-> single-publisher topology evaluated here is thus the most favourable case for MoQ's priority
-> mechanism, and results should not be extrapolated to fleet-scale contention without that caveat.
+> MoQ's priority is scoped to a session (draft-ietf-moq-transport-14 §7) — that is, to one
+> connection, not to one publisher. Because the edge relay serves each subscriber over a single
+> session carrying every publisher's tracks, priority arbitrates across publishers on the
+> bottleneck downlink, and the measurements confirm it: at four publishers under constant total
+> load, the priority scheduler holds safety-track latency to 178 ms against round-robin's 538 ms and
+> triples on-time delivery. It does not restore single-publisher performance (55% of deadlines are
+> still missed), but the sweep varies stream count and transmitting-UE count together and so cannot
+> attribute the residual. What MoQ demonstrably *cannot* order is traffic on the uplink leg, where
+> each vehicle holds a separate connection on a separate radio and arbitration falls to the 5G MAC
+> scheduler; protecting one vehicle's safety data from another's bulk data on that leg would require
+> RAN-level QoS (a distinct 5QI), not a MoQ mechanism.
 
-## Related
+## 8. Related
 
 - Sidelink / true V2V mesh (PC5) is a **different system**, with a different bottleneck and radio
   model. D2D is disabled in this project. Not a scenario variant — a different thesis.
-- See also `REPORT.md` §5 (threats to validity) and `ISSUES-AND-LIMITS.md` §B1.
+- `REPORT.md` §"RQ3 (extended)" and §5 (threats to validity); `ISSUES-AND-LIMITS.md` §B1.
+- `moq-operating-envelope.md` for why the 128 kB window, not the scheduler, carries N = 1.
+- Chart 8 (`PubScale_BBox_vs_publishers`) in `MOQ.anf`.
