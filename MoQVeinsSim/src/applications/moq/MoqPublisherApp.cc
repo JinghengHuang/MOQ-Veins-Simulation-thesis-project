@@ -473,8 +473,10 @@ void MoqPublisherApp::doSendQuicChunk(Pending& p) {
 }
 
 // Sweep the objects already written to QUIC and reset the stream of any that have outrun their
-// delivery timeout (draft-14 section 10.4.3: an object exceeding the delivery timeout MUST cause
-// the publisher to reset the underlying stream). Without this the timeout only ever sees the app
+// delivery timeout. draft-14 section 9.2.1.2 states the obligation -- "If an object in a subgroup
+// exceeds the delivery timeout, the publisher MUST reset the underlying transport stream" -- and
+// section 10.4.3 gives the mechanism and the DELIVERY_TIMEOUT (0x2) reset code. Without this the
+// timeout only ever sees the app
 // send buffer, so it does nothing whenever the transport buffer is deep enough that objects age
 // out *after* being handed to QUIC -- which is precisely when abandoning them is worth doing.
 //
@@ -506,8 +508,9 @@ void MoqPublisherApp::checkOutstandingTimeouts() {
     }
 }
 
-// Reset the QUIC stream carrying a subgroup (MoQ draft-14 section 10.4.3: an object that
-// exceeds its delivery timeout MUST cause the publisher to reset the underlying stream). The
+// Reset the QUIC stream carrying a subgroup (MoQ draft-14 section 10.4.3, "Closing Subgroup
+// Streams": a sender that closes a stream before delivering all its objects MUST use RESET_STREAM,
+// which includes an open Subgroup exceeding its Delivery Timeout). The
 // reset discards the object's bytes still queued inside QUIC and stops them being retransmitted,
 // and tells the receiver to discard the partial object. Because a stream carries a whole
 // subgroup, the rest of that subgroup goes with it -- objects already buffered are dropped when

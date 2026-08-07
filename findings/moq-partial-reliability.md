@@ -11,12 +11,13 @@ MOQ delivery-timeout shedding: BBox 200 ms, PCloud 1.0 s).
 ## 1. MOQT has no priority-based shedding (spec)
 
 We assumed the standard let a sender drop low-priority objects to protect high-priority ones.
-It does not. In draft-ietf-moq-transport:
+It does not. In draft-ietf-moq-transport-14 (2 September 2025):
 
-- **Priorities (§6.2)** govern *transmission order only* — subscriber priority, then publisher
-  priority, then group order, then object id.
-- **DELIVERY TIMEOUT (§8.2.1.2)** is the only dropping primitive: it is **age-based** and applies
-  **uniformly regardless of priority**. On expiry the publisher MUST reset the transport stream.
+- **Priorities (§7, scheduling algorithm in §7.2)** govern *transmission order only* — subscriber
+  priority, then publisher priority, then group order, then object id.
+- **DELIVERY TIMEOUT (§9.2.1.2)** is the only dropping primitive: it is **age-based** and applies
+  **uniformly regardless of priority**. On expiry the publisher MUST reset the transport stream
+  (the obligation is stated in §9.2.1.2; the reset mechanism and its error code are in §10.4.3).
 
 Consequence: a priority-eviction heuristic would be a *departure* from MOQT, not conformance to
 it. Track protection has to emerge from priority *scheduling* plus age-based shedding, or not at
@@ -156,5 +157,5 @@ is better named than glossed.
 - Chart BBox deadline-miss vs offered load with error bars.
 - If more BBox protection is wanted, the remaining spec-faithful lever is a **priority scheduler**
   in QUIC: INET ships only round-robin, and `IScheduler` already has the hook
-  (`// TODO: create Scheduler depending on ned file parameter`). MOQT §6.2 send-order would be a
+  (`// TODO: create Scheduler depending on ned file parameter`). MOQT §7.2 send-order would be a
   genuine contribution — but see §5: it cannot touch the radio queue either.
