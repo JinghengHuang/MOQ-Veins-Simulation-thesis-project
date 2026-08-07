@@ -1321,5 +1321,572 @@ utils.export_data_if_needed(combined, props)
 ]]></script>
             <property name="Graph.Title" value="Operating point: 128kB canonical vs 300kB tested-and-rejected (safety cost vs bulk benefit)"/>
         </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000014" name="PerSub_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Per-subscriber breakdown of the RQ2 protocol comparison. The RQ2_* charts average the subscriber
+# cars into one number per run; this one keeps every publisher->subscriber flow separate.
+#   x    = one flow (all comparison runs have a single publisher, car[0], and 7 subscribers)
+#   bars = protocol, always drawn in the same fixed order
+#   rows = track (BBox = safety, PCloud = bulk);  columns = scenario
+#
+# HOW TO READ IT: compare bars WITHIN a group. Subscribers join the SUMO scenario staggered and
+# drive different parts of the map, so they sit at different distances / handover histories from
+# the gNB -- the spread ACROSS groups is per-vehicle radio conditions and observation window, not a
+# protocol effect. A protocol claim is only supported when its bar wins in most groups.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LEGEND = {
+    "MOQ_Partial_BDP": "MoQ partial (128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable (128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC (default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# Categorical slots 1-7 of the reference palette, assigned to protocols in fixed order and never
+# cycled. Validated on the adjacent pairlist (which is what grouped bars are): worst colour-vision-
+# deficient dE 9.1, worst normal-vision dE 19.6. Three slots fall under 3:1 against white, so the
+# chart carries the required relief: a legend is always present and the tidy table is exported.
+COLOR = {
+    "MOQ_Partial_BDP": "#2a78d6",   # blue
+    "MOQ_SW_BDP":      "#eb6834",   # orange
+    "MOQ_QUIC":        "#1baf7a",   # aqua
+    "MQTT_QUIC":       "#eda100",   # yellow
+    "MOQ_UDP":         "#e87ba4",   # magenta
+    "MOQ_TCP":         "#008300",   # green
+    "MQTT_TCP":        "#4a3aa7",   # violet
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric):
+    """One row per (config, scenario, track, flow): mean over seeds, with a 95% CI.
+
+    A flow is a (publisher, subscriber) pair. The scalars are named
+    track[car[<pub>]/<Track>].<metric> and recorded on the SUBSCRIBER's app module, so the
+    publisher index comes from the scalar name and the subscriber index from the module path.
+    """
+    df = results.get_scalars('name =~ "track*%s"' % metric, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No comparison data. Generate it with:  ./scripts/run-all.sh results 5")
+    df = df[df["value"].notna()].copy()
+
+    ids = df["name"].str.extract(r"track\[car\[(\d+)\]/([A-Za-z]+)\]")
+    df["pub"] = pd.to_numeric(ids[0], errors="coerce")
+    df["track"] = ids[1]
+    df["sub"] = pd.to_numeric(df["module"].str.extract(r"car\[(\d+)\]")[0], errors="coerce")
+    # Keep receiver-side rows only: the publisher records its own offered/sent counters under the
+    # same track name, and blending sent with received would be meaningless.
+    df = df[df["pub"].notna() & df["sub"].notna() & (df["pub"] != df["sub"])]
+
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True).replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    if df.empty:
+        raise chart.ChartScriptError("No rows for the comparison configs after filtering.")
+
+    # One publisher -> label the flow by its subscriber; several -> spell the pair out.
+    multi_pub = df["pub"].nunique() > 1
+    df["flow"] = ["car[%d] <- car[%d]" % (s, p) if multi_pub else "car[%d]" % s
+                  for p, s in zip(df["pub"].astype(int), df["sub"].astype(int))]
+
+    per_run = df.groupby(["config", "scenario", "track", "flow", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["config", "scenario", "track", "flow"])["value"].agg(
+        ["mean", ci95, "count"]).reset_index()
+    agg.columns = ["config", "scenario", "track", "flow", "mean", "ci", "seeds"]
+
+    order = df[["flow", "pub", "sub"]].drop_duplicates().sort_values(["pub", "sub"])
+    return agg, list(order["flow"])
+
+def per_flow_bars(metric, spec, title):
+    """Grouped bars: one group per flow, one bar per protocol; a row per track, a column per scenario."""
+    agg, flows = load(metric)
+    tracks = [t for t in ("BBox", "PCloud") if t in set(agg["track"])]
+    scenarios = [s for s in ("urban", "highway") if s in set(agg["scenario"])]
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+
+    fig = plt.gcf()
+    fig.clear()
+    fig.set_layout_engine("compressed")
+    fig.set_size_inches(16, 4.6 * len(tracks))
+    # Share y within a row: the two scenarios are comparable for a given track; the two tracks are
+    # three orders of magnitude apart and get their own scale (and their own unit).
+    axes = fig.subplots(len(tracks), len(scenarios), sharey="row", squeeze=False)
+
+    x = np.arange(len(flows))
+    pitch = 0.84 / len(cfgs)
+    width = pitch * 0.82          # leaves a surface gap between adjacent bars
+
+    for r, track in enumerate(tracks):
+        sp = spec[track]
+        row_min = np.inf                      # smallest plotted value, for the log-axis floor
+        for c, scen in enumerate(scenarios):
+            ax = axes[r][c]
+            d = agg[(agg["track"] == track) & (agg["scenario"] == scen)]
+            for i, cfg in enumerate(cfgs):
+                s = d[d["config"] == cfg].set_index("flow").reindex(flows)
+                off = (i - (len(cfgs) - 1) / 2.0) * pitch
+                ax.bar(x + off, s["mean"] * sp["scale"], width,
+                       yerr=s["ci"] * sp["scale"], capsize=1.5,
+                       color=COLOR[cfg], label=LEGEND.get(cfg, cfg),
+                       error_kw=dict(lw=0.8, ecolor="#52514e"))
+                v = (s["mean"] * sp["scale"]).dropna()
+                v = v[v > 0]
+                if len(v):
+                    row_min = min(row_min, float(v.min()))
+            ax.set_xticks(x)
+            ax.set_xticklabels(flows, fontsize=8)
+            ax.set_xlim(-0.6, len(flows) - 0.4)
+            # Grid on the value axis only; groups are separated by an explicit rule BETWEEN them
+            # (an x-grid would put its line through the middle of a group instead).
+            ax.grid(axis="y", alpha=0.3)
+            ax.grid(axis="x", visible=False)
+            ax.set_axisbelow(True)
+            for b in x[:-1]:
+                ax.axvline(b + 0.5, color="#c3c2b7", linewidth=0.6, zorder=0)
+            if sp.get("logy"):
+                ax.set_yscale("log")
+            if sp.get("ylim") is not None:
+                ax.set_ylim(*sp["ylim"])
+            elif not sp.get("logy"):
+                ax.set_ylim(bottom=0)
+            if sp.get("hline") is not None:
+                ax.axhline(sp["hline"], color="crimson", linestyle="--", linewidth=1.2)
+                # In the corner, not on the line: bars run the full width of the panel, so a label
+                # sitting next to the line always lands on one of them.
+                ax.text(0.012, 0.97, "- - " + sp["hlabel"], transform=ax.transAxes,
+                        ha="left", va="top", color="crimson", fontsize=8,
+                        bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
+            ax.set_title("%s track -- %s" % (track, scen), fontsize=10)
+            if c == 0:
+                ax.set_ylabel(sp["ylabel"], fontsize=9)
+            if r == len(tracks) - 1:
+                ax.set_xlabel("subscriber", fontsize=9)
+
+        # Log panels autoscale down to a full decade below the data, which wastes half the panel.
+        # Anchor the floor just under the smallest bar (and under the deadline, so it stays on
+        # screen), and leave headroom at the top for the deadline caption.
+        if sp.get("logy") and np.isfinite(row_min):
+            floor = min(row_min, sp["hline"]) if sp.get("hline") else row_min
+            ax0 = axes[r][0]
+            ax0.set_ylim(bottom=floor / 1.8, top=ax0.get_ylim()[1] * 1.7)
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    try:
+        fig.legend(handles, labels, loc="outside lower center", ncol=len(cfgs), fontsize=9,
+                   frameon=False)
+    except ValueError:      # older Matplotlib: no outside-legend support under this layout engine
+        fig.legend(handles, labels, loc="lower center", ncol=len(cfgs), fontsize=9, frameon=False)
+    fig.suptitle(title, fontsize=12)
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+SPEC = {
+    "BBox":   dict(scale=1000, ylabel="mean end-to-end latency (ms)  [log]", logy=True,
+                   hline=100, hlabel="100 ms deadline"),
+    "PCloud": dict(scale=1000, ylabel="mean end-to-end latency (ms)  [log]", logy=True,
+                   hline=500, hlabel="500 ms deadline"),
+}
+agg = per_flow_bars("meanLatency", SPEC,
+                    "Latency per subscriber, by protocol (publisher car[0]; mean of seeds, 95% CI)")
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Per-subscriber latency: every protocol on every subscriber, both tracks and scenarios"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000015" name="PerSub_deadline_miss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Per-subscriber breakdown of the RQ2 protocol comparison. The RQ2_* charts average the subscriber
+# cars into one number per run; this one keeps every publisher->subscriber flow separate.
+#   x    = one flow (all comparison runs have a single publisher, car[0], and 7 subscribers)
+#   bars = protocol, always drawn in the same fixed order
+#   rows = track (BBox = safety, PCloud = bulk);  columns = scenario
+#
+# HOW TO READ IT: compare bars WITHIN a group. Subscribers join the SUMO scenario staggered and
+# drive different parts of the map, so they sit at different distances / handover histories from
+# the gNB -- the spread ACROSS groups is per-vehicle radio conditions and observation window, not a
+# protocol effect. A protocol claim is only supported when its bar wins in most groups.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LEGEND = {
+    "MOQ_Partial_BDP": "MoQ partial (128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable (128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC (default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# Categorical slots 1-7 of the reference palette, assigned to protocols in fixed order and never
+# cycled. Validated on the adjacent pairlist (which is what grouped bars are): worst colour-vision-
+# deficient dE 9.1, worst normal-vision dE 19.6. Three slots fall under 3:1 against white, so the
+# chart carries the required relief: a legend is always present and the tidy table is exported.
+COLOR = {
+    "MOQ_Partial_BDP": "#2a78d6",   # blue
+    "MOQ_SW_BDP":      "#eb6834",   # orange
+    "MOQ_QUIC":        "#1baf7a",   # aqua
+    "MQTT_QUIC":       "#eda100",   # yellow
+    "MOQ_UDP":         "#e87ba4",   # magenta
+    "MOQ_TCP":         "#008300",   # green
+    "MQTT_TCP":        "#4a3aa7",   # violet
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric):
+    """One row per (config, scenario, track, flow): mean over seeds, with a 95% CI.
+
+    A flow is a (publisher, subscriber) pair. The scalars are named
+    track[car[<pub>]/<Track>].<metric> and recorded on the SUBSCRIBER's app module, so the
+    publisher index comes from the scalar name and the subscriber index from the module path.
+    """
+    df = results.get_scalars('name =~ "track*%s"' % metric, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No comparison data. Generate it with:  ./scripts/run-all.sh results 5")
+    df = df[df["value"].notna()].copy()
+
+    ids = df["name"].str.extract(r"track\[car\[(\d+)\]/([A-Za-z]+)\]")
+    df["pub"] = pd.to_numeric(ids[0], errors="coerce")
+    df["track"] = ids[1]
+    df["sub"] = pd.to_numeric(df["module"].str.extract(r"car\[(\d+)\]")[0], errors="coerce")
+    # Keep receiver-side rows only: the publisher records its own offered/sent counters under the
+    # same track name, and blending sent with received would be meaningless.
+    df = df[df["pub"].notna() & df["sub"].notna() & (df["pub"] != df["sub"])]
+
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True).replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    if df.empty:
+        raise chart.ChartScriptError("No rows for the comparison configs after filtering.")
+
+    # One publisher -> label the flow by its subscriber; several -> spell the pair out.
+    multi_pub = df["pub"].nunique() > 1
+    df["flow"] = ["car[%d] <- car[%d]" % (s, p) if multi_pub else "car[%d]" % s
+                  for p, s in zip(df["pub"].astype(int), df["sub"].astype(int))]
+
+    per_run = df.groupby(["config", "scenario", "track", "flow", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["config", "scenario", "track", "flow"])["value"].agg(
+        ["mean", ci95, "count"]).reset_index()
+    agg.columns = ["config", "scenario", "track", "flow", "mean", "ci", "seeds"]
+
+    order = df[["flow", "pub", "sub"]].drop_duplicates().sort_values(["pub", "sub"])
+    return agg, list(order["flow"])
+
+def per_flow_bars(metric, spec, title):
+    """Grouped bars: one group per flow, one bar per protocol; a row per track, a column per scenario."""
+    agg, flows = load(metric)
+    tracks = [t for t in ("BBox", "PCloud") if t in set(agg["track"])]
+    scenarios = [s for s in ("urban", "highway") if s in set(agg["scenario"])]
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+
+    fig = plt.gcf()
+    fig.clear()
+    fig.set_layout_engine("compressed")
+    fig.set_size_inches(16, 4.6 * len(tracks))
+    # Share y within a row: the two scenarios are comparable for a given track; the two tracks are
+    # three orders of magnitude apart and get their own scale (and their own unit).
+    axes = fig.subplots(len(tracks), len(scenarios), sharey="row", squeeze=False)
+
+    x = np.arange(len(flows))
+    pitch = 0.84 / len(cfgs)
+    width = pitch * 0.82          # leaves a surface gap between adjacent bars
+
+    for r, track in enumerate(tracks):
+        sp = spec[track]
+        row_min = np.inf                      # smallest plotted value, for the log-axis floor
+        for c, scen in enumerate(scenarios):
+            ax = axes[r][c]
+            d = agg[(agg["track"] == track) & (agg["scenario"] == scen)]
+            for i, cfg in enumerate(cfgs):
+                s = d[d["config"] == cfg].set_index("flow").reindex(flows)
+                off = (i - (len(cfgs) - 1) / 2.0) * pitch
+                ax.bar(x + off, s["mean"] * sp["scale"], width,
+                       yerr=s["ci"] * sp["scale"], capsize=1.5,
+                       color=COLOR[cfg], label=LEGEND.get(cfg, cfg),
+                       error_kw=dict(lw=0.8, ecolor="#52514e"))
+                v = (s["mean"] * sp["scale"]).dropna()
+                v = v[v > 0]
+                if len(v):
+                    row_min = min(row_min, float(v.min()))
+            ax.set_xticks(x)
+            ax.set_xticklabels(flows, fontsize=8)
+            ax.set_xlim(-0.6, len(flows) - 0.4)
+            # Grid on the value axis only; groups are separated by an explicit rule BETWEEN them
+            # (an x-grid would put its line through the middle of a group instead).
+            ax.grid(axis="y", alpha=0.3)
+            ax.grid(axis="x", visible=False)
+            ax.set_axisbelow(True)
+            for b in x[:-1]:
+                ax.axvline(b + 0.5, color="#c3c2b7", linewidth=0.6, zorder=0)
+            if sp.get("logy"):
+                ax.set_yscale("log")
+            if sp.get("ylim") is not None:
+                ax.set_ylim(*sp["ylim"])
+            elif not sp.get("logy"):
+                ax.set_ylim(bottom=0)
+            if sp.get("hline") is not None:
+                ax.axhline(sp["hline"], color="crimson", linestyle="--", linewidth=1.2)
+                # In the corner, not on the line: bars run the full width of the panel, so a label
+                # sitting next to the line always lands on one of them.
+                ax.text(0.012, 0.97, "- - " + sp["hlabel"], transform=ax.transAxes,
+                        ha="left", va="top", color="crimson", fontsize=8,
+                        bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
+            ax.set_title("%s track -- %s" % (track, scen), fontsize=10)
+            if c == 0:
+                ax.set_ylabel(sp["ylabel"], fontsize=9)
+            if r == len(tracks) - 1:
+                ax.set_xlabel("subscriber", fontsize=9)
+
+        # Log panels autoscale down to a full decade below the data, which wastes half the panel.
+        # Anchor the floor just under the smallest bar (and under the deadline, so it stays on
+        # screen), and leave headroom at the top for the deadline caption.
+        if sp.get("logy") and np.isfinite(row_min):
+            floor = min(row_min, sp["hline"]) if sp.get("hline") else row_min
+            ax0 = axes[r][0]
+            ax0.set_ylim(bottom=floor / 1.8, top=ax0.get_ylim()[1] * 1.7)
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    try:
+        fig.legend(handles, labels, loc="outside lower center", ncol=len(cfgs), fontsize=9,
+                   frameon=False)
+    except ValueError:      # older Matplotlib: no outside-legend support under this layout engine
+        fig.legend(handles, labels, loc="lower center", ncol=len(cfgs), fontsize=9, frameon=False)
+    fig.suptitle(title, fontsize=12)
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+SPEC = {
+    "BBox":   dict(scale=100, ylabel="deadline-miss ratio (%)", ylim=(0, 105)),
+    "PCloud": dict(scale=100, ylabel="deadline-miss ratio (%)", ylim=(0, 105)),
+}
+agg = per_flow_bars("deadlineMissRatio", SPEC,
+                    "Deadline-miss ratio per subscriber, by protocol "
+                    "(share of RECEIVED objects that arrived late; publisher car[0])")
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Per-subscriber deadline-miss ratio: every protocol on every subscriber"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000016" name="PerSub_throughput" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Per-subscriber breakdown of the RQ2 protocol comparison. The RQ2_* charts average the subscriber
+# cars into one number per run; this one keeps every publisher->subscriber flow separate.
+#   x    = one flow (all comparison runs have a single publisher, car[0], and 7 subscribers)
+#   bars = protocol, always drawn in the same fixed order
+#   rows = track (BBox = safety, PCloud = bulk);  columns = scenario
+#
+# HOW TO READ IT: compare bars WITHIN a group. Subscribers join the SUMO scenario staggered and
+# drive different parts of the map, so they sit at different distances / handover histories from
+# the gNB -- the spread ACROSS groups is per-vehicle radio conditions and observation window, not a
+# protocol effect. A protocol claim is only supported when its bar wins in most groups.
+ORDER = ["MOQ_Partial_BDP", "MOQ_SW_BDP", "MOQ_QUIC", "MQTT_QUIC", "MOQ_UDP", "MOQ_TCP", "MQTT_TCP"]
+LEGEND = {
+    "MOQ_Partial_BDP": "MoQ partial (128kB)",
+    "MOQ_SW_BDP":      "MoQ reliable (128kB)",
+    "MOQ_QUIC":        "MoQ / QUIC (default)",
+    "MQTT_QUIC":       "MQTT / QUIC",
+    "MOQ_UDP":         "MoQ / UDP",
+    "MOQ_TCP":         "MoQ / TCP",
+    "MQTT_TCP":        "MQTT / TCP",
+}
+# Categorical slots 1-7 of the reference palette, assigned to protocols in fixed order and never
+# cycled. Validated on the adjacent pairlist (which is what grouped bars are): worst colour-vision-
+# deficient dE 9.1, worst normal-vision dE 19.6. Three slots fall under 3:1 against white, so the
+# chart carries the required relief: a legend is always present and the tidy table is exported.
+COLOR = {
+    "MOQ_Partial_BDP": "#2a78d6",   # blue
+    "MOQ_SW_BDP":      "#eb6834",   # orange
+    "MOQ_QUIC":        "#1baf7a",   # aqua
+    "MQTT_QUIC":       "#eda100",   # yellow
+    "MOQ_UDP":         "#e87ba4",   # magenta
+    "MOQ_TCP":         "#008300",   # green
+    "MQTT_TCP":        "#4a3aa7",   # violet
+}
+# t(0.975, dof) for small samples
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+
+def ci95(x):
+    x = x.dropna()
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return T95.get(n - 1, 1.96) * x.std(ddof=1) / np.sqrt(n)
+
+def load(metric):
+    """One row per (config, scenario, track, flow): mean over seeds, with a 95% CI.
+
+    A flow is a (publisher, subscriber) pair. The scalars are named
+    track[car[<pub>]/<Track>].<metric> and recorded on the SUBSCRIBER's app module, so the
+    publisher index comes from the scalar name and the subscriber index from the module path.
+    """
+    df = results.get_scalars('name =~ "track*%s"' % metric, include_runattrs=True)
+    if df.empty:
+        raise chart.ChartScriptError(
+            "No comparison data. Generate it with:  ./scripts/run-all.sh results 5")
+    df = df[df["value"].notna()].copy()
+
+    ids = df["name"].str.extract(r"track\[car\[(\d+)\]/([A-Za-z]+)\]")
+    df["pub"] = pd.to_numeric(ids[0], errors="coerce")
+    df["track"] = ids[1]
+    df["sub"] = pd.to_numeric(df["module"].str.extract(r"car\[(\d+)\]")[0], errors="coerce")
+    # Keep receiver-side rows only: the publisher records its own offered/sent counters under the
+    # same track name, and blending sent with received would be meaningless.
+    df = df[df["pub"].notna() & df["sub"].notna() & (df["pub"] != df["sub"])]
+
+    df["scenario"] = np.where(df["configname"].str.endswith("_HW"), "highway", "urban")
+    df["config"] = df["configname"].str.replace("_HW$", "", regex=True).replace({"MOQ": "MOQ_QUIC"})
+    df = df[df["config"].isin(ORDER)]
+    if df.empty:
+        raise chart.ChartScriptError("No rows for the comparison configs after filtering.")
+
+    # One publisher -> label the flow by its subscriber; several -> spell the pair out.
+    multi_pub = df["pub"].nunique() > 1
+    df["flow"] = ["car[%d] <- car[%d]" % (s, p) if multi_pub else "car[%d]" % s
+                  for p, s in zip(df["pub"].astype(int), df["sub"].astype(int))]
+
+    per_run = df.groupby(["config", "scenario", "track", "flow", "runID"])["value"].mean().reset_index()
+    agg = per_run.groupby(["config", "scenario", "track", "flow"])["value"].agg(
+        ["mean", ci95, "count"]).reset_index()
+    agg.columns = ["config", "scenario", "track", "flow", "mean", "ci", "seeds"]
+
+    order = df[["flow", "pub", "sub"]].drop_duplicates().sort_values(["pub", "sub"])
+    return agg, list(order["flow"])
+
+def per_flow_bars(metric, spec, title):
+    """Grouped bars: one group per flow, one bar per protocol; a row per track, a column per scenario."""
+    agg, flows = load(metric)
+    tracks = [t for t in ("BBox", "PCloud") if t in set(agg["track"])]
+    scenarios = [s for s in ("urban", "highway") if s in set(agg["scenario"])]
+    cfgs = [c for c in ORDER if c in set(agg["config"])]
+
+    fig = plt.gcf()
+    fig.clear()
+    fig.set_layout_engine("compressed")
+    fig.set_size_inches(16, 4.6 * len(tracks))
+    # Share y within a row: the two scenarios are comparable for a given track; the two tracks are
+    # three orders of magnitude apart and get their own scale (and their own unit).
+    axes = fig.subplots(len(tracks), len(scenarios), sharey="row", squeeze=False)
+
+    x = np.arange(len(flows))
+    pitch = 0.84 / len(cfgs)
+    width = pitch * 0.82          # leaves a surface gap between adjacent bars
+
+    for r, track in enumerate(tracks):
+        sp = spec[track]
+        row_min = np.inf                      # smallest plotted value, for the log-axis floor
+        for c, scen in enumerate(scenarios):
+            ax = axes[r][c]
+            d = agg[(agg["track"] == track) & (agg["scenario"] == scen)]
+            for i, cfg in enumerate(cfgs):
+                s = d[d["config"] == cfg].set_index("flow").reindex(flows)
+                off = (i - (len(cfgs) - 1) / 2.0) * pitch
+                ax.bar(x + off, s["mean"] * sp["scale"], width,
+                       yerr=s["ci"] * sp["scale"], capsize=1.5,
+                       color=COLOR[cfg], label=LEGEND.get(cfg, cfg),
+                       error_kw=dict(lw=0.8, ecolor="#52514e"))
+                v = (s["mean"] * sp["scale"]).dropna()
+                v = v[v > 0]
+                if len(v):
+                    row_min = min(row_min, float(v.min()))
+            ax.set_xticks(x)
+            ax.set_xticklabels(flows, fontsize=8)
+            ax.set_xlim(-0.6, len(flows) - 0.4)
+            # Grid on the value axis only; groups are separated by an explicit rule BETWEEN them
+            # (an x-grid would put its line through the middle of a group instead).
+            ax.grid(axis="y", alpha=0.3)
+            ax.grid(axis="x", visible=False)
+            ax.set_axisbelow(True)
+            for b in x[:-1]:
+                ax.axvline(b + 0.5, color="#c3c2b7", linewidth=0.6, zorder=0)
+            if sp.get("logy"):
+                ax.set_yscale("log")
+            if sp.get("ylim") is not None:
+                ax.set_ylim(*sp["ylim"])
+            elif not sp.get("logy"):
+                ax.set_ylim(bottom=0)
+            if sp.get("hline") is not None:
+                ax.axhline(sp["hline"], color="crimson", linestyle="--", linewidth=1.2)
+                # In the corner, not on the line: bars run the full width of the panel, so a label
+                # sitting next to the line always lands on one of them.
+                ax.text(0.012, 0.97, "- - " + sp["hlabel"], transform=ax.transAxes,
+                        ha="left", va="top", color="crimson", fontsize=8,
+                        bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=1.5))
+            ax.set_title("%s track -- %s" % (track, scen), fontsize=10)
+            if c == 0:
+                ax.set_ylabel(sp["ylabel"], fontsize=9)
+            if r == len(tracks) - 1:
+                ax.set_xlabel("subscriber", fontsize=9)
+
+        # Log panels autoscale down to a full decade below the data, which wastes half the panel.
+        # Anchor the floor just under the smallest bar (and under the deadline, so it stays on
+        # screen), and leave headroom at the top for the deadline caption.
+        if sp.get("logy") and np.isfinite(row_min):
+            floor = min(row_min, sp["hline"]) if sp.get("hline") else row_min
+            ax0 = axes[r][0]
+            ax0.set_ylim(bottom=floor / 1.8, top=ax0.get_ylim()[1] * 1.7)
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    try:
+        fig.legend(handles, labels, loc="outside lower center", ncol=len(cfgs), fontsize=9,
+                   frameon=False)
+    except ValueError:      # older Matplotlib: no outside-legend support under this layout engine
+        fig.legend(handles, labels, loc="lower center", ncol=len(cfgs), fontsize=9, frameon=False)
+    fig.suptitle(title, fontsize=12)
+    return agg
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+
+# BBox is a 50 B / 100 ms track (a few kbps) and PCloud is the 300 KB / 200 ms bulk (Mbps), so the
+# two rows carry their own unit rather than being forced onto one log axis.
+SPEC = {
+    "BBox":   dict(scale=1e-3, ylabel="goodput delivered (kbps)"),
+    "PCloud": dict(scale=1e-6, ylabel="goodput delivered (Mbps)"),
+}
+agg = per_flow_bars("throughput", SPEC,
+                    "Goodput per subscriber, by protocol (received bytes / observation window; "
+                    "publisher car[0])")
+
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(agg, props)
+]]></script>
+            <property name="Graph.Title" value="Per-subscriber goodput: every protocol on every subscriber"/>
+        </chart>
     </charts>
 </analysis>
