@@ -133,7 +133,11 @@ class MoqPublisherApp : public inet::ApplicationBase,
         std::map<long, std::deque<Pending>> sendBuffer;   // priority -> FIFO (oldest at front)
         long sendBufferCount = 0;
         size_t sendBufferLimit = 2000;
-        long quicShed = 0;     // objects evicted from the send buffer (capacity overflow)
+        long quicShed = 0;     // objects discarded when the subscription was torn down
+        // Subscription teardown at the resource limit (draft-14 9.2.1.2 / 9.12 TOO_FAR_BEHIND).
+        bool subscriptionsEnded = false;
+        omnetpp::simtime_t terminationTime = 0;
+        long terminationStatus = 0;
         std::unordered_map<long, long> quicShedStale; // per-track objects dropped past delivery timeout
         // Per-track objects lost as collateral of an OVERFLOW-triggered stream reset. Not MoQ
         // shedding: reported apart from quicShedStale so conformant and artifact drops stay separate.
@@ -163,6 +167,7 @@ class MoqPublisherApp : public inet::ApplicationBase,
         double sendDwellSum = 0; double sendDwellMax = 0; long sendDwellCount = 0;
         void enqueuePending(Pending&& p);
         void resetSubgroupStream(const SubgroupKey& key, long streamId, int errorCode);
+        void terminateSubscriptions(long statusCode);
         void doSendQuicChunk(Pending& p);
         void flushSendBuffer();
 

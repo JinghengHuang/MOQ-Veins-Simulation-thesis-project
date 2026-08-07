@@ -192,6 +192,11 @@ private:
                              const std::vector<uint8_t>& frameBytes, omnetpp::simtime_t firstByteTime);
     void doForwardSendChunk(FwdItem& item);
     void resetDownstreamStream(const FwdItem& item, int errorCode);
+    // Subscription teardown (draft-14 9.12). Streams are reset before PUBLISH_DONE goes out.
+    void sendPublishDone(const std::string& subscriberId, const TrackKey& tKey, long statusCode);
+    void endSubscriberTrack(const std::string& subscriberId, const TrackKey& tKey, long statusCode);
+    void endTrackDownstream(const TrackKey& tKey, long statusCode);
+    long publishDoneSent = 0;   // PUBLISH_DONE messages emitted downstream
     void flushSocket(int socketId);
 
     // ---- transport selection (additive; QUIC path unchanged) ----

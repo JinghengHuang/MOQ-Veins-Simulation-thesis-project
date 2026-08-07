@@ -125,6 +125,10 @@ class MoqSubscriberApp : public inet::ApplicationBase,
         virtual void socketStreamReset(inet::QuicSocket *socket, uint64_t streamId,
                                        uint64_t applicationErrorCode) override;
         long objectsResetByPeer = 0;
+        // Peer-initiated subscription teardown (draft-14 9.12). -1 until PUBLISH_DONE arrives.
+        omnetpp::simtime_t subscriptionEndTime = -1;
+        long subscriptionEndStatus = -1;
+        void noteSubscriptionEnded(const MoqControlFrame& c);
 
         // ---- TcpSocket::ICallback (used when proto == PROTO_TCP) ----
         virtual void socketDataArrived(inet::TcpSocket *socket, inet::Packet *packet, bool urgent) override;

@@ -233,6 +233,7 @@ void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet 
         MoqControlFrame c;
         size_t consumed;
         while (MoqFraming::tryParseControl(rb.data, c, consumed)) {
+            if (c.type == CTRL_PUBLISH_DONE) noteSubscriptionEnded(c);
             rb.data.erase(rb.data.begin(), rb.data.begin() + consumed);
         }
     } else {
@@ -247,6 +248,22 @@ void MoqSubscriberApp::socketDataArrived(inet::QuicSocket* socket, inet::Packet 
     }
     delete packet;
     startNextRecv(socket);
+}
+
+// The publisher side ended this subscription (draft-14 section 9.12). Record when and why, and
+// do NOT resubscribe: TOO_FAR_BEHIND means the sender's queue for us exceeded its limit, which in
+// this scenario is a standing condition -- an immediate retry would refill the same queue, trip
+// the same limit, and add control traffic to an already congested downlink. The draft says nothing
+// about retrying; it is an application decision, and here the application declines.
+// Objects already in flight may still arrive: section 9.12 has the subscriber hold state for at
+// least the delivery timeout, so recording continues and late arrivals are still counted.
+void MoqSubscriberApp::noteSubscriptionEnded(const MoqControlFrame& c)
+{
+    if (subscriptionEndTime >= SIMTIME_ZERO) return;   // first one wins
+    subscriptionEndTime = omnetpp::simTime();
+    subscriptionEndStatus = c.statusCode;
+    EV_WARN << "Subscription for " << c.trackAlias << " ended by peer, status=" << c.statusCode
+            << " at " << subscriptionEndTime << std::endl;
 }
 
 // Send a control frame (SUBSCRIBE). QUIC uses the control stream; TCP prepends an envelope
@@ -406,6 +423,9 @@ void MoqSubscriberApp::socketStreamReset(inet::QuicSocket *socket, uint64_t stre
 void MoqSubscriberApp::finish()
 {
     recordScalar("objectsResetByPeer", objectsResetByPeer);
+    // -1 = the subscription was never ended by the peer (it ran to the end of the simulation).
+    recordScalar("subscriptionEndTime", subscriptionEndTime.dbl(), "s");
+    recordScalar("subscriptionEndStatus", subscriptionEndStatus);
 
     for (auto& entry : subStats) {
         const std::string& trackAlias = entry.first;

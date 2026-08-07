@@ -368,6 +368,10 @@ void MoqPublisherApp::sendControlFrame(const MoqControlFrame& c) {
 // Send a data object. QUIC uses a per-track data stream (client-bidi 4,8,...); TCP envelopes
 // it on the single stream; UDP fragments it into bounded datagrams.
 void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
+    // The subscription is over (PUBLISH_DONE already sent): draft-14 section 9.12 requires that a
+    // sender close every stream it will ever open BEFORE sending PUBLISH_DONE, so nothing may go
+    // out afterwards.
+    if (subscriptionsEnded) return;
     auto frame = MoqFraming::encode(f);
     PubTrackStat& ps = pubStats[tid];
     switch (proto) {
@@ -523,34 +527,69 @@ void MoqPublisherApp::resetSubgroupStream(const SubgroupKey& key, long streamId,
     subgroupResets++;
 }
 
-// Buffer an object while QUIC is blocked, keeping FIFO order within each priority. On overflow,
-// shed the lowest-priority (highest number), oldest object — partial reliability that protects
-// the high-priority track and drops the bulk track first.
+// Buffer an object while QUIC is blocked, keeping FIFO order within each priority. When the buffer
+// exceeds its limit the subscription is over -- see terminateSubscriptions().
 void MoqPublisherApp::enqueuePending(Pending&& p) {
     long prio = p.priority;
     sendBuffer[prio].push_back(std::move(p));
     sendBufferCount++;
     if (sendBufferCount <= (long) sendBufferLimit) return;
 
-    // Evict the oldest object of the lowest-priority track. An object that has already started
-    // transmitting can be evicted as well now that each object owns its stream: resetting the
-    // stream discards its bytes and tells the receiver to drop the partial object.
-    //
-    // NOTE: this priority-ordered eviction is NOT a MoQ mechanism. MoQ's only dropping primitive
-    // is the age-based DELIVERY_TIMEOUT, which is priority-blind; priority governs transmission
-    // order only (section 7.2). This eviction exists solely because a real send buffer is finite,
-    // and is reported separately (quicShed) from the standard-conformant timeout shedding.
-    for (auto prioIt = sendBuffer.rbegin(); prioIt != sendBuffer.rend(); ++prioIt) {
-        auto& queue = prioIt->second;
-        if (queue.empty()) continue;
-        auto obj = queue.begin();
-        if (obj->sentOffset > 0)
-            resetSubgroupStream(obj->subgroup, obj->streamId, MOQ_ERR_SEND_BUFFER_OVERFLOW);
-        queue.erase(obj);
-        sendBufferCount--;
-        quicShed++;
-        return;
+    // draft-14 section 9.2.1.2: "If a subscriber fails to consume Objects at a sufficient rate,
+    // causing the publisher to exceed its resource limits, the publisher MAY terminate the
+    // subscription with error TOO_FAR_BEHIND." sendBufferLimit is the "implementation defined
+    // limit" of section 9.12's TOO_FAR_BEHIND. This replaces an earlier priority-ordered eviction,
+    // which was not a MoQ behaviour: priority governs transmission ORDER only (section 7.2), and
+    // dropping the lowest-priority object silently made a track with no DELIVERY_TIMEOUT -- i.e.
+    // one the draft says delivers every object -- quietly lossy instead of failing loudly.
+    terminateSubscriptions(PUBDONE_TOO_FAR_BEHIND);
+}
+
+// End every subscription this publisher is serving, per draft-14 section 9.12. Ordering matters:
+// "A sender MUST NOT send PUBLISH_DONE until it has closed all streams it will ever open, and has
+// no further datagrams to send, for a subscription", so reset the open subgroup streams first.
+// The resource limit is a property of the peer ("the publisher's queue of objects to be sent to
+// the given subscriber"), so all of that peer's subscriptions end together rather than picking one
+// track -- choosing a victim by priority would reintroduce the very thing this replaced.
+void MoqPublisherApp::terminateSubscriptions(long statusCode) {
+    if (subscriptionsEnded) return;         // PUBLISH_DONE is sent once per subscription
+    subscriptionsEnded = true;
+    terminationTime = omnetpp::simTime();
+    terminationStatus = statusCode;
+
+    // 1. Abandon everything still in flight or queued for this peer. Snapshot first:
+    //    resetSubgroupStream erases from subgroupStreams, which would invalidate the iterator.
+    std::vector<std::pair<SubgroupKey, long>> openStreams(subgroupStreams.begin(),
+                                                          subgroupStreams.end());
+    for (auto& entry : openStreams)
+        resetSubgroupStream(entry.first, entry.second, MOQ_ERR_SEND_BUFFER_OVERFLOW);
+    for (auto& prioQueue : sendBuffer)
+        for (auto& pend : prioQueue.second) {
+            quicShedOverflow[pend.tid]++;
+            quicShed++;
+        }
+    sendBuffer.clear();
+    sendBufferCount = 0;
+    outstanding.clear();
+
+    // 2. One PUBLISH_DONE per subscription, i.e. per announced track.
+    for (auto& t : tracks) {
+        MoqControlFrame done;
+        done.type = CTRL_PUBLISH_DONE;
+        done.statusCode = statusCode;
+        done.trackId = t.second.trackId;
+        done.publisherId = t.second.publisherId;
+        done.trackNamespace = t.second.trackNamespace;
+        done.trackName = t.second.trackName;
+        done.trackAlias = t.second.trackAlias;
+        sendControlFrame(done);
+        // 3. Stop producing: the subscription state is gone, so nothing more may be sent for it.
+        if (t.second.timer && t.second.timer->isScheduled())
+            cancelEvent(t.second.timer);
     }
+    EV_WARN << "PUBLISH_DONE(status=" << statusCode << ") sent for all tracks at "
+            << terminationTime << ": send buffer exceeded " << sendBufferLimit << " objects"
+            << std::endl;
 }
 
 // QUIC drained: flush buffered objects highest-priority (lowest number) first, oldest within a
@@ -687,8 +726,14 @@ void MoqPublisherApp::finish()
     // Peak occupancy the app ever drove QUIC's send queue to; stays under sendQueueLimit when the
     // write pacing is working.
     recordScalar("quicSendQueueMaxObserved", quicQueueMaxObserved, "B");
-    recordScalar("quicShed", quicShed);                   // objects evicted on buffer overflow
+    recordScalar("objectsDiscardedAtTeardown", quicShed);  // queued objects dropped when the subscription ended
     recordScalar("subgroupStreamResets", subgroupResets); // RESET_STREAM sent (section 10.4.3)
+    // Subscription teardown at the resource limit (draft-14 9.2.1.2 / 9.12). survivalTime is the
+    // headline for a track with no DELIVERY_TIMEOUT: how long the publisher sustained the
+    // subscription before its queue exceeded the implementation-defined limit. -1 = never ended.
+    recordScalar("subscriptionEnded", subscriptionsEnded ? 1 : 0);
+    recordScalar("subscriptionEndStatus", subscriptionsEnded ? terminationStatus : -1);
+    recordScalar("survivalTime", subscriptionsEnded ? terminationTime.dbl() : -1.0, "s");
     if (sendDwellCount > 0) {
         recordScalar("sendBufferDwellMean", sendDwellSum / sendDwellCount, "s");
         recordScalar("sendBufferDwellMax", sendDwellMax, "s");

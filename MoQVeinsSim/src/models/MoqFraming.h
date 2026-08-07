@@ -85,6 +85,16 @@ enum MoqControlType : uint8_t {
     CTRL_ANNOUNCE     = 1, // publisher -> relay: register a track
     CTRL_SUBSCRIBE    = 2, // subscriber -> relay: request a track
     CTRL_SUBSCRIBE_OK = 3, // relay -> publisher: start sending a track
+    // Sender -> its subscriber: this subscription is over, statusCode says why (draft-14 9.12).
+    // Sent by the publisher toward the relay, and by the relay toward a subscriber car.
+    CTRL_PUBLISH_DONE = 4,
+};
+
+// PUBLISH_DONE status codes (draft-14 section 9.12). Only the two this model can emit.
+enum MoqPublishDoneStatus : long {
+    PUBDONE_TRACK_ENDED     = 0x2, // "The track is no longer being published."
+    PUBDONE_TOO_FAR_BEHIND  = 0x6, // "The publisher's queue of objects to be sent to the given
+                                   //  subscriber exceeds its implementation defined limit."
 };
 
 struct MoqControlFrame {
@@ -95,6 +105,7 @@ struct MoqControlFrame {
     long payloadSize = 0;
     long startObjectId = 0;
     long subscriberPriority = 0;
+    long statusCode = 0;         // PUBLISH_DONE only: a MoqPublishDoneStatus
     omnetpp::simtime_t sendInterval = 0;
     omnetpp::simtime_t deliveryTimeout = 0; // ANNOUNCE: sender-side stale-drop timeout for the track
     std::string trackNamespace;
@@ -189,6 +200,7 @@ inline std::vector<uint8_t> encodeControl(const MoqControlFrame& c) {
     putI64(body, c.payloadSize);
     putI64(body, c.startObjectId);
     putI64(body, c.subscriberPriority);
+    putI64(body, c.statusCode);
     putI64(body, c.sendInterval.raw());
     putI64(body, c.deliveryTimeout.raw());
     putStr(body, c.trackNamespace);
@@ -215,6 +227,7 @@ inline bool tryParseControl(const uint8_t* data, size_t size, MoqControlFrame& o
     out.payloadSize = getI64(p); p += 8;
     out.startObjectId = getI64(p); p += 8;
     out.subscriberPriority = getI64(p); p += 8;
+    out.statusCode = getI64(p); p += 8;
     out.sendInterval = omnetpp::SimTime::fromRaw(getI64(p)); p += 8;
     out.deliveryTimeout = omnetpp::SimTime::fromRaw(getI64(p)); p += 8;
     out.trackNamespace = getStr(p);

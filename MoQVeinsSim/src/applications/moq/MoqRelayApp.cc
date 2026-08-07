@@ -246,6 +246,85 @@ namespace moqveinssim
                 EV_WARN << "SUBSCRIBE for unknown track " << trackAlias << std::endl;
             }
         }
+        else if (c.type == CTRL_PUBLISH_DONE) {
+            // Upstream ended this track's subscription (draft-14 9.12). This relay holds no cache
+            // of future objects, so it can no longer serve the track and must end its own
+            // downstream subscriptions -- the same pattern section 2.5 mandates for a malformed
+            // track. Downstream the reason is TRACK_ENDED, not TOO_FAR_BEHIND: those subscribers
+            // are not the ones that fell behind.
+            endTrackDownstream(TrackKey{c.trackNamespace, c.trackName}, PUBDONE_TRACK_ENDED);
+        }
+    }
+
+    // Send PUBLISH_DONE to one subscriber and forget its state for this track. Per draft-14
+    // section 9.12 every stream the relay will ever open for the subscription must be closed
+    // first, so the caller resets them before calling.
+    void MoqRelayApp::sendPublishDone(const std::string &subscriberId, const TrackKey &tKey,
+                                      long statusCode)
+    {
+        auto sockIt = subscriberSockets.find(subscriberId);
+        if (sockIt == subscriberSockets.end()) return;
+        MoqControlFrame done;
+        done.type = CTRL_PUBLISH_DONE;
+        done.statusCode = statusCode;
+        done.trackNamespace = tKey.trackNamespace;
+        done.trackName = tKey.trackName;
+        done.trackAlias = tKey.trackNamespace + "/" + tKey.trackName;
+        done.subscriberId = subscriberId;
+        auto pkt = new inet::Packet("PUBLISH_DONE");
+        pkt->insertAtBack(inet::makeShared<inet::BytesChunk>(MoqFraming::encodeControl(done)));
+        sockIt->second->send(pkt, CONTROL_STREAM, CONTROL_STREAM_PRIORITY);
+        publishDoneSent++;
+    }
+
+    // End ONE track for ONE subscriber: abandon what is queued or in flight for it, then
+    // PUBLISH_DONE. Streams are reset before the message, as section 9.12 requires.
+    void MoqRelayApp::endSubscriberTrack(const std::string &subscriberId, const TrackKey &tKey,
+                                         long statusCode)
+    {
+        const std::string alias = tKey.trackNamespace + "/" + tKey.trackName;
+        auto sockIt = subscriberSockets.find(subscriberId);
+        if (sockIt == subscriberSockets.end()) return;
+        auto stIt = sockSend.find(sockIt->second->getSocketId());
+        if (stIt != sockSend.end()) {
+            for (auto &prioQueue : stIt->second.buffer) {
+                auto &q = prioQueue.second;
+                for (auto &item : q) {
+                    if (item.trackAlias != alias) continue;
+                    if (item.sentOffset > 0)
+                        resetDownstreamStream(item, MOQ_ERR_SEND_BUFFER_OVERFLOW);
+                    relayShedOverflow[item.trackAlias]++;
+                }
+                long before = (long) q.size();
+                q.erase(std::remove_if(q.begin(), q.end(),
+                                       [&](const FwdItem &i) { return i.trackAlias == alias; }),
+                        q.end());
+                long removed = before - (long) q.size();
+                stIt->second.count -= removed;
+                pendingForwardCount -= removed;
+            }
+        }
+        sendPublishDone(subscriberId, tKey, statusCode);
+
+        auto tbIt = subscriberByTrack.find(tKey);
+        if (tbIt != subscriberByTrack.end()) {
+            auto &v = tbIt->second;
+            v.erase(std::remove(v.begin(), v.end(), subscriberId), v.end());
+            if (v.empty()) subscriberByTrack.erase(tbIt);
+        }
+    }
+
+    // End a track for every subscriber of it.
+    void MoqRelayApp::endTrackDownstream(const TrackKey &tKey, long statusCode)
+    {
+        auto subsIt = subscriberByTrack.find(tKey);
+        if (subsIt == subscriberByTrack.end()) return;
+        std::vector<std::string> subs = subsIt->second;   // copy: endSubscriberTrack mutates the map
+        for (const auto &sid : subs)
+            endSubscriberTrack(sid, tKey, statusCode);
+        EV_WARN << "PUBLISH_DONE(status=" << statusCode << ") sent downstream for "
+                << tKey.trackNamespace << "/" << tKey.trackName << " to " << subs.size()
+                << " subscriber(s) at " << omnetpp::simTime() << std::endl;
     }
 
     // ===================== TCP server path (proto == PROTO_TCP) =====================
@@ -526,24 +605,21 @@ namespace moqveinssim
             st.count++;
             pendingForwardCount++;
 
-            // Finite relay buffer: on overflow drop the oldest object of the lowest-priority
-            // track. A partially sent object can be dropped too, by resetting its stream.
-            // (Like the publisher's, this eviction is a finite-buffer artifact, not a MoQ
-            // mechanism -- MoQ drops only on age, via DELIVERY_TIMEOUT.)
+            // This subscriber's queue exceeded the implementation-defined limit, which is exactly
+            // the TOO_FAR_BEHIND condition (draft-14 9.2.1.2 / 9.12): end its subscriptions rather
+            // than silently drop objects. Same reasoning as MoqPublisherApp::terminateSubscriptions
+            // -- the limit is a property of the peer, so every track it subscribes to ends.
             if (st.count > quicForwardBufferPerSubscriberLimit) {
-                for (auto prioIt = st.buffer.rbegin(); prioIt != st.buffer.rend(); ++prioIt) {
-                    auto& queue = prioIt->second;
-                    if (queue.empty()) continue;
-                    auto victim = queue.begin();
-                    if (victim->sentOffset > 0)
-                        resetDownstreamStream(*victim, MOQ_ERR_SEND_BUFFER_OVERFLOW);
-                    queue.erase(victim);
-                    st.count--;
-                    pendingForwardCount--;
-                    relayDroppedTotal++;
-                    EV_WARN << "Forward queue overflow for socketId=" << sockId << std::endl;
-                    break;
-                }
+                relayDroppedTotal++;
+                EV_WARN << "Forward queue for socketId=" << sockId << " exceeded "
+                        << quicForwardBufferPerSubscriberLimit << " objects: TOO_FAR_BEHIND"
+                        << std::endl;
+                std::vector<TrackKey> ended;
+                for (auto &tb : subscriberByTrack)
+                    if (std::find(tb.second.begin(), tb.second.end(), subscriberId) != tb.second.end())
+                        ended.push_back(tb.first);
+                for (const auto &tk : ended)
+                    endSubscriberTrack(subscriberId, tk, PUBDONE_TOO_FAR_BEHIND);
             }
             emit(relayQueueDepthSignal, pendingForwardCount);
             flushSocket(sockId);
@@ -721,7 +797,9 @@ namespace moqveinssim
     void MoqRelayApp::finish()
     {
         recordScalar("objectsForwardedTotal", objectsForwardedTotal);
-        recordScalar("objectsDroppedQueueOverflow", relayDroppedTotal);
+        // Times a subscriber's forward queue hit the limit, i.e. TOO_FAR_BEHIND teardowns.
+        recordScalar("subscribersTooFarBehind", relayDroppedTotal);
+        recordScalar("publishDoneSent", publishDoneSent);
         recordScalar("objectsResetByPublisher", upstreamResets);
         recordScalar("subgroupStreamResets", downstreamResets); // RESET_STREAM sent downstream
         recordScalar("quicSendRejected", relayRejected); // must be 0: nonzero = silent loss in QUIC
