@@ -60,7 +60,12 @@ class MoqPublisherApp : public inet::ApplicationBase,
             }
         };
         std::map<SubgroupKey, long> subgroupStreams;   // subgroup -> its stream id
-        std::set<SubgroupKey> resetSubgroups;          // subgroups whose stream we reset
+        // Subgroups whose stream we reset, keyed to WHY. A reset abandons the whole subgroup, so
+        // the remaining objects are dropped as collateral -- and they must be charged to the cause,
+        // because MOQ_ERR_DELIVERY_TIMEOUT is standard shedding while MOQ_ERR_SEND_BUFFER_OVERFLOW
+        // is our finite-buffer artifact. Folding both into one counter overstates conformant
+        // shedding (it did: highway MOQ_SW_BDP has no delivery timeout at all, yet reported 667).
+        std::map<SubgroupKey, int> resetSubgroups;     // subgroup -> reset error code
 
         // Stream 0 is the control stream; data streams are client-bidi 4,8,...
         static const long CONTROL_STREAM = 0;
@@ -130,6 +135,9 @@ class MoqPublisherApp : public inet::ApplicationBase,
         size_t sendBufferLimit = 2000;
         long quicShed = 0;     // objects evicted from the send buffer (capacity overflow)
         std::unordered_map<long, long> quicShedStale; // per-track objects dropped past delivery timeout
+        // Per-track objects lost as collateral of an OVERFLOW-triggered stream reset. Not MoQ
+        // shedding: reported apart from quicShedStale so conformant and artifact drops stay separate.
+        std::unordered_map<long, long> quicShedOverflow;
         long subgroupResets = 0;  // subgroup streams reset because an object timed out
 
         // Objects fully written to QUIC but not yet known to be delivered. MoQ's delivery timeout

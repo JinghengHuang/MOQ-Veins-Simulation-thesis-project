@@ -490,10 +490,12 @@ namespace moqveinssim
             // subgroup-to-stream mapping is what lets a stale object's stream be reset.
             DownSubgroup key{subscriberId, f.trackAlias, f.groupId, f.subgroupId};
 
-            // Stream already reset (an earlier object of this subgroup timed out): the rest of
-            // the subgroup went with it.
-            if (resetDownstream.count(key)) {
-                relayShedStale[f.trackAlias]++;
+            // Stream already reset: the rest of the subgroup went with it. Charged to the cause of
+            // the reset, so overflow collateral does not masquerade as timeout shedding.
+            auto rdIt = resetDownstream.find(key);
+            if (rdIt != resetDownstream.end()) {
+                if (rdIt->second == MOQ_ERR_SEND_BUFFER_OVERFLOW) relayShedOverflow[f.trackAlias]++;
+                else relayShedStale[f.trackAlias]++;
                 return;
             }
 
@@ -643,7 +645,7 @@ namespace moqveinssim
     void MoqRelayApp::resetDownstreamStream(const FwdItem &item, int errorCode)
     {
         item.sock->resetStream(item.streamId, errorCode);
-        resetDownstream.insert(item.subgroup);
+        resetDownstream[item.subgroup] = errorCode;
         downstreamStreams.erase(item.subgroup);
         downstreamResets++;
     }
@@ -673,9 +675,12 @@ namespace moqveinssim
             if (it == st.buffer.end()) break;
             FwdItem& item = it->second.front();
 
-            // The subgroup's stream was reset by an earlier timeout, so this object went with it.
-            if (resetDownstream.count(item.subgroup)) {
-                relayShedStale[item.trackAlias]++;
+            // The subgroup's stream was already reset, so this object went with it -- charged to
+            // whatever caused the reset (timeout = MoQ shedding, overflow = buffer artifact).
+            auto rdIt = resetDownstream.find(item.subgroup);
+            if (rdIt != resetDownstream.end()) {
+                if (rdIt->second == MOQ_ERR_SEND_BUFFER_OVERFLOW) relayShedOverflow[item.trackAlias]++;
+                else relayShedStale[item.trackAlias]++;
                 it->second.pop_front();
                 st.count--;
                 pendingForwardCount--;
@@ -729,6 +734,14 @@ namespace moqveinssim
             shedTotal += s.second;
         }
         recordScalar("objectsShedStale", shedTotal);
+        // Collateral of overflow-triggered resets: an artifact of the finite forward buffer, not
+        // MoQ shedding, so it is reported apart from objectsShedStale.
+        long shedOverflowTotal = 0;
+        for (auto& s : relayShedOverflow) {
+            recordScalar(("track[" + s.first + "].objectsShedOverflow").c_str(), s.second);
+            shedOverflowTotal += s.second;
+        }
+        recordScalar("objectsShedOverflow", shedOverflowTotal);
         if (fwdDelayCount > 0) {
             recordScalar("meanForwardDelay", fwdDelaySum / fwdDelayCount, "s");
             recordScalar("maxForwardDelay", fwdDelayMax, "s");
@@ -772,7 +785,7 @@ namespace moqveinssim
             for (auto it = downstreamStreams.begin(); it != downstreamStreams.end(); )
                 (it->first.subscriberId == sid) ? it = downstreamStreams.erase(it) : ++it;
             for (auto it = resetDownstream.begin(); it != resetDownstream.end(); )
-                (it->subscriberId == sid) ? it = resetDownstream.erase(it) : ++it;
+                (it->first.subscriberId == sid) ? it = resetDownstream.erase(it) : ++it;
             subscriberSockets.erase(sid);
         }
         emit(relayQueueDepthSignal, pendingForwardCount);
@@ -902,7 +915,7 @@ namespace moqveinssim
             }
             if (now - it->createdAt > it->timeout) {
                 it->sock->resetStream(it->streamId, MOQ_ERR_DELIVERY_TIMEOUT);
-                resetDownstream.insert(it->subgroup);
+                resetDownstream[it->subgroup] = MOQ_ERR_DELIVERY_TIMEOUT;
                 downstreamStreams.erase(it->subgroup);
                 downstreamResets++;
                 relayResetAfterSend[it->trackAlias]++;

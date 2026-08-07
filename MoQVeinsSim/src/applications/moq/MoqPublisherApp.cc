@@ -380,10 +380,13 @@ void MoqPublisherApp::sendObjectFrame(const MoqObjectFrame& f, long tid) {
             // object would permanently desynchronise the receiver's length-prefix parser.
             SubgroupKey key{tid, f.groupId, f.subgroupId};
 
-            // The subgroup's stream was reset (an earlier object in it timed out), so the rest of
-            // the subgroup is gone with it -- section 10.4.3's reset abandons the whole stream.
-            if (resetSubgroups.count(key)) {
-                quicShedStale[tid]++;
+            // The subgroup's stream was reset, so the rest of the subgroup is gone with it --
+            // section 10.4.3's reset abandons the whole stream. Charge the drop to whatever caused
+            // the reset, not unconditionally to timeout shedding.
+            auto rsIt = resetSubgroups.find(key);
+            if (rsIt != resetSubgroups.end()) {
+                if (rsIt->second == MOQ_ERR_SEND_BUFFER_OVERFLOW) quicShedOverflow[tid]++;
+                else quicShedStale[tid]++;
                 return;
             }
 
@@ -512,7 +515,7 @@ void MoqPublisherApp::checkOutstandingTimeouts() {
 // sendObjectFrame.
 void MoqPublisherApp::resetSubgroupStream(const SubgroupKey& key, long streamId, int errorCode) {
     socket.resetStream(streamId, errorCode);
-    resetSubgroups.insert(key);
+    resetSubgroups[key] = errorCode;
     subgroupStreams.erase(key);
     subgroupResets++;
 }
@@ -570,11 +573,14 @@ void MoqPublisherApp::flushSendBuffer() {
         if (it == sendBuffer.end()) break;
         Pending& p = it->second.front();
 
-        // This object's subgroup stream was reset by an earlier timeout, so the object went with
-        // it: a reset abandons the whole stream, and with it the rest of the subgroup
-        // (section 10.4.3). Dropped lazily here rather than by walking the buffer at reset time.
-        if (resetSubgroups.count(p.subgroup)) {
-            quicShedStale[p.tid]++;
+        // This object's subgroup stream was already reset, so the object went with it: a reset
+        // abandons the whole stream, and with it the rest of the subgroup (section 10.4.3).
+        // Dropped lazily here rather than by walking the buffer at reset time. Attributed to the
+        // reset's cause -- timeout shedding is MoQ, overflow eviction is our buffer artifact.
+        auto rsIt = resetSubgroups.find(p.subgroup);
+        if (rsIt != resetSubgroups.end()) {
+            if (rsIt->second == MOQ_ERR_SEND_BUFFER_OVERFLOW) quicShedOverflow[p.tid]++;
+            else quicShedStale[p.tid]++;
             it->second.pop_front();
             sendBufferCount--;
             if (it->second.empty()) sendBuffer.erase(it);
@@ -700,6 +706,9 @@ void MoqPublisherApp::finish()
         }
         auto sIt = quicShedStale.find(tid);
         recordScalar((prefix + "objectsShedStale").c_str(), sIt != quicShedStale.end() ? sIt->second : 0);
+        // Collateral of a send-buffer-overflow reset: NOT MoQ shedding, kept out of objectsShedStale.
+        auto oIt = quicShedOverflow.find(tid);
+        recordScalar((prefix + "objectsShedOverflow").c_str(), oIt != quicShedOverflow.end() ? oIt->second : 0);
         // Objects abandoned after they had already been written to QUIC (stream reset).
         auto rIt = resetAfterSend.find(tid);
         recordScalar((prefix + "objectsResetAfterSend").c_str(), rIt != resetAfterSend.end() ? rIt->second : 0);

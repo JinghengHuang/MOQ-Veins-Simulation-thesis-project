@@ -80,7 +80,10 @@ private:
         }
     };
     std::map<DownSubgroup, long> downstreamStreams;  // subgroup -> downstream stream id
-    std::set<DownSubgroup> resetDownstream;          // subgroups whose stream we reset
+    // Subgroups whose stream we reset, keyed to WHY: a reset abandons the whole subgroup, and the
+    // collateral drops must be charged to the cause. MOQ_ERR_DELIVERY_TIMEOUT is standard MoQ
+    // shedding; MOQ_ERR_SEND_BUFFER_OVERFLOW is our finite-buffer artifact. See MoqPublisherApp.
+    std::map<DownSubgroup, int> resetDownstream;     // subgroup -> reset error code
     long downstreamResets = 0;                       // RESET_STREAM sent to subscribers
 
     // Objects already written to a subscriber's QUIC socket but not yet known delivered. The
@@ -161,6 +164,8 @@ private:
     long relayDroppedTotal = 0;     // dropped due to forwarding-queue overflow
     long upstreamResets = 0;        // objects abandoned by the publisher via RESET_STREAM
     std::map<std::string, long> relayShedStale; // trackAlias -> dropped past the delivery timeout
+    // trackAlias -> lost as collateral of an OVERFLOW-triggered reset. Not MoQ shedding.
+    std::map<std::string, long> relayShedOverflow;
     long relayRejected = 0;         // DIAGNOSTIC: sends refused by QUIC (silent loss); must stay 0
     // Objects held for ONE subscriber connection before the overflow eviction kicks in (NED
     // parameter quicForwardBufferPerSubscriberLimit). Counted across all priority queues of that
