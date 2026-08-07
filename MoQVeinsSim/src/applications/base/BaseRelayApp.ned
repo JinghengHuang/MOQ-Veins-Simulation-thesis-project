@@ -17,6 +17,13 @@ simple BaseRelayApp extends SimpleModule like IApp  {
         // parameter on BasePublisherApp: it keeps a bulk object from filling QUIC's connection-wide
         // send queue on its own and stalling the latency-critical track behind it.
         int quicChunkBytes @unit(B) = default(16384B);
+        // QUIC: objects the relay may hold for ONE subscriber connection before it evicts. On
+        // overflow the oldest object of the lowest-priority track is dropped, resetting its stream
+        // if it had begun transmitting. This is a finite-buffer safeguard, NOT a MoQ mechanism --
+        // MoQ drops only on age, via DELIVERY_TIMEOUT -- so evictions are counted separately as
+        // objectsDroppedQueueOverflow. Exposed here so the value appears in run metadata and can
+        // be varied without recompiling.
+        int quicForwardBufferPerSubscriberLimit = default(1024);
         string localAddress = default(""); // Local address or empty ("")
         int localPort = default(9001); // port number to listen on
     gates:

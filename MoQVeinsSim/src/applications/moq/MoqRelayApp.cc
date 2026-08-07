@@ -64,6 +64,7 @@ namespace moqveinssim
         else proto = PROTO_QUIC;
         udpFragmentSize = (int) par("udpFragmentSize").intValue();
         quicChunkBytes = par("quicChunkBytes").intValue();
+        quicForwardBufferPerSubscriberLimit = par("quicForwardBufferPerSubscriberLimit").intValue();
         timeoutCheckInterval = par("deliveryTimeoutCheckInterval").doubleValue();
         if (proto == PROTO_QUIC)
             scheduleAt(omnetpp::simTime() + timeoutCheckInterval, timerTimeoutCheck);
@@ -527,7 +528,7 @@ namespace moqveinssim
             // track. A partially sent object can be dropped too, by resetting its stream.
             // (Like the publisher's, this eviction is a finite-buffer artifact, not a MoQ
             // mechanism -- MoQ drops only on age, via DELIVERY_TIMEOUT.)
-            if (st.count > (long) maxFifoPerStream) {
+            if (st.count > quicForwardBufferPerSubscriberLimit) {
                 for (auto prioIt = st.buffer.rbegin(); prioIt != st.buffer.rend(); ++prioIt) {
                     auto& queue = prioIt->second;
                     if (queue.empty()) continue;

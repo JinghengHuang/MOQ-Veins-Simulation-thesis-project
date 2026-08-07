@@ -162,7 +162,10 @@ private:
     long upstreamResets = 0;        // objects abandoned by the publisher via RESET_STREAM
     std::map<std::string, long> relayShedStale; // trackAlias -> dropped past the delivery timeout
     long relayRejected = 0;         // DIAGNOSTIC: sends refused by QUIC (silent loss); must stay 0
-    static const size_t maxFifoPerStream = 1024;
+    // Objects held for ONE subscriber connection before the overflow eviction kicks in (NED
+    // parameter quicForwardBufferPerSubscriberLimit). Counted across all priority queues of that
+    // socket, not per stream.
+    long quicForwardBufferPerSubscriberLimit = 1024;
     int nextDataStreamId = 1;       // relay->subscriber data stream ids (1,5,9,...)
     long quicSendQueueLimit = 64L * 1024 * 1024;
     long quicChunkBytes = 16L * 1024;
