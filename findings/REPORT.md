@@ -133,26 +133,42 @@ timeliness; it does not provide both.**
 - **The bounded window buys the remaining ~38×** (1246 → 33 ms, urban), and is where the deadline
   is actually won.
 
-**Why plain UDP also trails QUIC on goodput** (the comparison the three layers above omit). UDP has
-no loss recovery, and the MoQ-over-UDP path hand-fragments each 37.5 KB object into ~32 independent
-1200 B datagrams reassembled all-or-nothing — so one lost fragment discards the whole object,
-P(delivered) ≈ (1−p)³².
+**Why plain UDP also trails QUIC** (the comparison the three layers above omit). The clean
+measurement is the per-track in-range loss ratio, because `BBox` is 125 B — **one datagram, never
+fragmented** — while `PCloud` is 32. Comparing the two isolates congestion control from
+reassembly:
 
-The clean evidence is the packet-to-object ratio, which no denominator choice can distort:
-**a UDP subscriber receives 3.6× more packets per run than a QUIC one (125 185 vs 34 955 at the
-UDP layer) while completing *fewer* objects (3416 vs 3565 per run)** — the direct fingerprint of
-fragmentation amplification. So "no flow control, just keep sending" is a liability, not an edge:
-uncontrolled sending into the ~66 Mbps cell manufactures extra queue-drop that UDP cannot recover,
-amplified ~32× per object. **Loss recovery — not the stream abstraction itself — is the separator**,
-since stream-less TCP matches QUIC (highway PCloud 66.6% vs 66.2% delivered, pooled).
+| highway, in-range loss | BBox (1 datagram) | PCloud (32 datagrams) |
+|---|---|---|
+| MoQ / UDP | **58.6%** | 77.5% |
+| MoQ / QUIC | 12.1% | 33.7% |
+| MoQ / TCP | 31.8% | 32.3% |
 
-*Denominator caveat.* "UDP delivers only 22.1%" against TCP/QUIC's ~66% compares two ratios with
-structurally different denominators. `objectsExpected` derives from the highest object ID that
-arrives, and the connection-oriented configs backlog so badly that their subscribers never reach
-past object ~880, where a UDP subscriber — which drops rather than queues — reaches ~2577. TCP and
-QUIC therefore deliver most of a *short prefix* of the track; UDP delivers a scattered fraction of
-a **3× longer span**. Both ratios are correct and they do not measure the same thing. Compare
-per-track loss ratios (below), not the headline percentage.
+**UDP's deficit is the absence of congestion control, not the absence of reassembly robustness.**
+It loses 58.6% of its *smallest, single-datagram* messages where QUIC loses 12.1% — a gap that
+exists before any object is fragmented. Uncontrolled sending into the ~66 Mbps cell manufactures
+queue-drop that UDP then cannot recover.
+
+All-or-nothing reassembly is real and adds a **second, smaller** penalty: survival falls from
+41.4% (BBox) to 22.5% (PCloud), a factor of **~1.8×**, not 32×. The independence model
+`P(delivered) ≈ (1−p)³²` is badly wrong here — at the observed p = 0.586 it predicts ~10⁻¹² PCloud
+survival against 22.5% measured. **Fragment losses are strongly correlated**: an object's 32
+datagrams are written back-to-back and are dropped together by a single queue-overflow event, so
+they largely share fate. That correlation is itself a finding — burst loss is what makes
+application-layer fragmentation survivable at all at this loss rate.
+
+**Loss recovery — not the stream abstraction itself — separates UDP from the rest**: stream-less
+TCP matches QUIC on the bulk track (32.3% vs 33.7% loss; 66.6% vs 66.2% delivered, pooled). On the
+safety track TCP falls behind QUIC (31.8% vs 12.1%) for the separate reason established above —
+head-of-line blocking, not loss.
+
+*Denominator caveat.* Do not quote "UDP delivers 22.1%" against TCP/QUIC's ~66% as a like-for-like
+comparison. `objectsExpected` derives from the highest object ID that arrives, and the
+connection-oriented configs backlog so badly that their subscribers never reach past object ~880,
+where a UDP subscriber — which drops rather than queues — reaches ~2577. TCP and QUIC deliver most
+of a *short prefix* of the track; UDP delivers a scattered fraction of a **3× longer span**. Both
+ratios are individually correct and they do not measure the same thing. The loss-ratio table above
+is the comparison to cite.
 
 **Why MQTT cannot close the gap — three named mechanisms** (verified against MQTT v5.0; see
 `mqtt-vs-moq.md`):
