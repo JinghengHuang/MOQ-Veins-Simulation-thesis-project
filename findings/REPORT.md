@@ -82,8 +82,8 @@ Three design lessons, each measured rather than assumed:
 | MoQ / QUIC (default) | 1246 ± 228 ms / 79.9 ± 2.5% / 3.8 kbps | 1633 ± 1142 ms / 93.4 ± 2.3% / 3.9 kbps *(ends at 68 s)* |
 | MQTT / QUIC | 2918 ± 127 ms / 90.0 ± 0.9% / 3.2 kbps | 8297 ± 812 ms / 97.3 ± 0.7% / 1.3 kbps |
 | MoQ / UDP | 1421 ± 371 ms / 93.2 ± 1.1% / 3.1 kbps | 3519 ± 846 ms / 99.0 ± 0.2% / 1.5 kbps |
-| MoQ / TCP | 22 289 ± 301 ms / 100% / 0.9 kbps | 15 864 ± 1770 ms / 100% / 0.5 kbps |
-| MQTT / TCP | 26 137 ± 96 ms / 100% / 0.9 kbps | 17 878 ± 2159 ms / 100% / 0.5 kbps |
+| MoQ / TCP | 4365 ± 857 ms / 91.3 ± 1.8% / 3.0 kbps | 8662 ± 1163 ms / 98.5 ± 0.5% / 1.2 kbps |
+| MQTT / TCP | 3964 ± 793 ms / 94.8 ± 0.6% / 3.1 kbps | 8557 ± 979 ms / 98.1 ± 1.9% / 1.2 kbps *(n = 4)* |
 
 *Rows marked "ends at N s" reach their send-buffer limit and terminate the subscription with
 PUBLISH_DONE TOO_FAR_BEHIND (draft-14 §9.2.1.2) in all 5 seeds. The highway publisher is on the
@@ -100,14 +100,14 @@ truncated offered count. See `moq-operating-envelope.md` §7.*
 | MoQ / QUIC (default) | 3291 ± 247 ms / 72.7% / **9.44 ± 0.16 Mbps** | 9106 ± 1278 ms / 90.0% / 3.11 Mbps *(ends at 68 s)* |
 | MQTT / QUIC | 2878 ± 131 ms / 65.8% / **9.66 ± 0.27 Mbps** | 8265 ± 829 ms / 88.1% / 3.45 Mbps |
 | MoQ / UDP | 1208 ± 508 ms / 55.1% / 7.88 Mbps | 2125 ± 224 ms / 83.6% / 2.55 Mbps |
-| MoQ / TCP | 22 254 ms / 99.9% / 2.48 Mbps | 15 693 ms / 99.8% / 1.37 Mbps |
-| MQTT / TCP | 26 081 ms / 100% / 2.49 Mbps | 17 695 ms / 100% / 1.32 Mbps |
+| MoQ / TCP | 4330 ± 835 ms / 65.9 ± 10.4% / 8.84 ± 0.68 Mbps | 8502 ± 1227 ms / 89.3 ± 1.6% / 3.06 Mbps |
+| MQTT / TCP | 3938 ± 778 ms / 61.0 ± 5.8% / 9.09 ± 0.35 Mbps | 8550 ± 925 ms / 87.1 ± 7.0% / 2.72 Mbps *(n = 4)* |
 
 ### What the numbers say
 
 **Latency: MoQ wins, decisively, in both scenarios.** On the safety track it is **88× faster than
-MQTT/QUIC** and **~790× faster than either TCP variant** (urban), and **85× / 165×** faster
-respectively on the highway. The CIs are far apart; this is not marginal.
+MQTT/QUIC** and **120–132× faster than the TCP variants** (urban); on the highway the corresponding
+factors are **73×** and **76–77×**. The CIs are far apart; this is not marginal.
 
 **Throughput: MoQ does *not* beat MQTT.** On bulk goodput at a default window, MoQ/QUIC achieves
 9.44 ± 0.16 Mbps against MQTT/QUIC's 9.66 ± 0.27 Mbps — MQTT is, if anything, marginally higher,
@@ -116,19 +116,22 @@ buys the deadline **halves bulk goodput** (9.44 → 4.21 Mbps). **MoQ trades thr
 timeliness; it does not provide both.**
 
 **The gap decomposes into three layers**, all mechanism-attributable:
-- **TCP is catastrophic** (16–26 s, 100% miss, ~4–12% delivered). A single ordered byte stream
-  means a 37.5 KB PCloud segment head-of-line-blocks a 50 B BBox message, and no application
-  protocol can fix that from above. This dominates everything else. **The highway data makes the
-  mechanism directly visible: TCP delivers BBox at the *same* latency as its own PCloud (7.55 s vs
-  7.45 s) — the safety track moves at the bulk track's pace because they share one ordered stream —
-  while QUIC decouples them (BBox 0.93 s vs PCloud 8.62 s, ~9×). This is HOL blocking measured, not
-  inferred, and it is distinct from the earlier advertised-window artifact (now fixed): TCP's bulk
-  throughput is at parity (PCloud 398 vs QUIC 499 objects delivered), yet BBox still collapses
-  (95 vs 404). The window fix removed the static starvation; the single ordered stream is what
-  remains.**
-- **QUIC alone buys ~8–18×** by removing cross-stream head-of-line blocking. Still 12–29× short of
-  the deadline.
-- **The bounded window buys the remaining ~38×** (1246 → 33 ms, urban).
+- **TCP loses on latency, not on throughput** (4.4 s urban / 8.6 s highway; 91–95% and 98% miss).
+  A single ordered byte stream means a 37.5 KB PCloud segment head-of-line-blocks a 50 B BBox
+  message, and no application protocol can fix that from above. **The signature is direct: TCP
+  delivers BBox at essentially its own PCloud's latency — 4365 vs 4330 ms urban, 8662 vs 8502 ms
+  highway — because the safety track moves at the bulk track's pace when they share one ordered
+  stream. QUIC decouples them (urban 1246 vs 3291 ms; highway 1633 vs 9106 ms). Meanwhile bulk
+  throughput is at near-parity (urban PCloud 8.84 Mbps over TCP against 9.44 Mbps over QUIC), so
+  this is not a capacity deficit — the ordered stream costs latency specifically.** This is HOL
+  blocking measured rather than inferred, and it is what remains after the advertised-window
+  artifact was fixed; the earlier "22–26 s, 100% miss, ~12% delivered" figures were that artifact,
+  not TCP.
+- **QUIC alone buys less than expected** — 3.5× for MoQ and only 1.4× for MQTT (urban); on the
+  highway 5.3× for MoQ and essentially nothing for MQTT (8557 → 8297 ms). Removing cross-stream
+  HOL blocking helps only a protocol that uses multiple streams, and MQTT does not.
+- **The bounded window buys the remaining ~38×** (1246 → 33 ms, urban), and is where the deadline
+  is actually won.
 
 **Why plain UDP also trails QUIC on goodput** (the comparison the three layers above omit; verified
 against a radio trace). UDP has no loss recovery, and the MoQ-over-UDP path hand-fragments each
