@@ -245,7 +245,7 @@ What the study does **not** establish. These belong in a Threats to Validity sec
 
 | limit | detail |
 |---|---|
-| **Simu5G handover crash** | `NrTxPdcpEntity::deliverPdcpPdu - destination must be a UE` — a handover/attach race in Simu5G's Binder. Aborts a small number of highway runs; **deterministic per seed** and **independent of the protocol under test** (it struck `MOQ_TCP` seed 3 and `MOQ_UDP` seed 4 by chance of draw). Affected runs are excluded and reported (n = 7 instead of 8 for those rows). Judged not cost-effective to fix. |
+| **Simu5G handover crash** | `deliverPdcpPdu - destination must be a UE`, raised in `Highway.gNodeB1.cellularNic.pdcp` (`simu5g::NrPdcpEnb`) — a handover/attach race in Simu5G's Binder. Aborts 2 of 35 highway runs; **deterministic per seed** and **independent of the protocol under test** (it struck `MQTT_TCP` seed 1 at t = 20.05 s and `MOQ_UDP` seed 4 at t = 16.05 s — two different protocol families, by chance of draw). Both fire early, shortly after attach, and are unrelated to the far-end ping-pong below. Affected runs are excluded via `.sca.aborted` and reported: **n = 4 instead of 5 for those two rows only**. Judged not cost-effective to fix. |
 
 ## B3. Modelling assumptions (deliberate simplifications)
 
