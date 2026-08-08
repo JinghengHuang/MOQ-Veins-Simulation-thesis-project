@@ -2,6 +2,9 @@
 
 Answers to RQ1–RQ3, with the evidence base and its limits.
 
+Abbreviations, protocol terms and config-name suffixes are defined in
+[`GLOSSARY.md`](GLOSSARY.md).
+
 ---
 
 ## Setup

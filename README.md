@@ -167,6 +167,6 @@ MoQVeinsSim/src/applications/mqtt/   MQTT v5.0 publisher, broker, subscriber
 MoQVeinsSim/src/models/              framing, track config, shared subscriber statistics
 MoQVeinsSim/simulations/             omnetpp.ini, SUMO scenarios, analysis scripts
 scripts/                             run-all.sh, run-comparison.sh, aggregate_seeds.py
-findings/                            REPORT.md (start here), ISSUES-AND-LIMITS.md, supporting studies
+findings/                            REPORT.md (start here), GLOSSARY.md, ISSUES-AND-LIMITS.md, supporting studies
 design/                              the MoQ and MQTT specifications used as constraints
 ```
