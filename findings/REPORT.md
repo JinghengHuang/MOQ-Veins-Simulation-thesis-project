@@ -133,16 +133,26 @@ timeliness; it does not provide both.**
 - **The bounded window buys the remaining ~38×** (1246 → 33 ms, urban), and is where the deadline
   is actually won.
 
-**Why plain UDP also trails QUIC on goodput** (the comparison the three layers above omit; verified
-against a radio trace). UDP has no loss recovery, and the MoQ-over-UDP path hand-fragments each
-37.5 KB object into ~32 independent 1200 B datagrams reassembled all-or-nothing — so one lost
-fragment discards the whole object, P(delivered) ≈ (1−p)³². TCP and QUIC both retransmit and land
-within a few points of each other (highway PCloud 66.6% / 63.7% delivered); **UDP drops to 22.1%,
-and receives 3–4× *more* packets while completing *fewer* objects** — the direct fingerprint of
+**Why plain UDP also trails QUIC on goodput** (the comparison the three layers above omit). UDP has
+no loss recovery, and the MoQ-over-UDP path hand-fragments each 37.5 KB object into ~32 independent
+1200 B datagrams reassembled all-or-nothing — so one lost fragment discards the whole object,
+P(delivered) ≈ (1−p)³².
+
+The clean evidence is the packet-to-object ratio, which no denominator choice can distort:
+**a UDP subscriber receives 3.6× more packets per run than a QUIC one (125 185 vs 34 955 at the
+UDP layer) while completing *fewer* objects (3416 vs 3565 per run)** — the direct fingerprint of
 fragmentation amplification. So "no flow control, just keep sending" is a liability, not an edge:
 uncontrolled sending into the ~66 Mbps cell manufactures extra queue-drop that UDP cannot recover,
 amplified ~32× per object. **Loss recovery — not the stream abstraction itself — is the separator**,
-since stream-less TCP matches QUIC.
+since stream-less TCP matches QUIC (highway PCloud 66.6% vs 66.2% delivered, pooled).
+
+*Denominator caveat.* The often-quoted "UDP delivers only 22.1%" is arithmetically correct but
+misleading on its own: `objectsExpected` is derived from the highest object ID that arrives, and
+the connection-oriented configs tear their subscriptions down early, so UDP is charged against
+~15 460 offered objects per seed where QUIC is charged against ~5383. Normalised to the same
+offered count UDP delivers ~63%, close to TCP and QUIC. **UDP's deficit is that it is offered more
+and completes no more — not that it delivers a third as reliably.** Quote the packet-to-object
+ratio, not the delivery percentage.
 
 **Why MQTT cannot close the gap — three named mechanisms** (verified against MQTT v5.0; see
 `mqtt-vs-moq.md`):
