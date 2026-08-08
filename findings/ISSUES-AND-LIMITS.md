@@ -175,9 +175,8 @@ so in a priority-aware way that happened to protect the safety track.
   sustain the highway workload for the publisher's time on the road** (~88 s: 3 km at 33.3 m/s). It
   terminates in all 5 seeds — 63.0 ± 2.1 s (`MOQ_SW_BDP`), 68.2 ± 1.9 s (`MOQ_QUIC`),
   65.4 ± 3.6 s (`MOQ_SW_BDP_300`) — losing the last quarter to third of the session and delivering
-  fewer safety objects than partial reliability (1680 ± 443 vs 2173 ± 461). Partial reliability
-  produces for the full window; its single teardown (seed 4, 88.8 s) lands *after* production
-  finished at 88.0 s and costs nothing. Urban never reaches the limit in any config or seed — at
+  fewer safety objects than partial reliability (1680 ± 443 vs 2184 ± 522). Partial reliability
+  produces for the full window and never terminates in either scenario. Urban never reaches the limit in any config or seed — at
   ~41 s of road time the backlog cannot reach 2000 objects. Survival time is roughly linear in
   `sendBufferLimit`, so quote it with the buffer size; the robust claim is the ordering, not the
   seconds. See `moq-operating-envelope.md` §7.
@@ -233,7 +232,7 @@ What the study does **not** establish. These belong in a Threats to Validity sec
 
 | limit | detail |
 |---|---|
-| **The headline deadline result is urban-only** | MoQ meets the 100 ms safety deadline in the urban grid (33 ± 3 ms, 0.2% miss) but **not on the highway** (102 ± 42 ms, **19.2% miss**). The protocol *ordering* holds in both; the absolute claim does not. This is the single most important caveat. |
+| **The headline deadline result is urban-only** | MoQ meets the 100 ms safety deadline in the urban grid (33 ± 3 ms, 0.2% miss) but **not on the highway** (113 ± 50 ms, **20.5% miss**). The protocol *ordering* holds in both; the absolute claim does not. This is the single most important caveat. |
 | **The bulk track is sacrificed, not served** | Protecting BBox necessarily starves PCloud: at the operating window MoQ delivers only ~23% of PCloud, and PCloud misses its own 500 ms deadline ~99% of the time at **every** window where BBox is safe — the link is over capacity for *both* tracks, so no configuration serves both. MoQ's value is therefore **directing the unavoidable loss by policy** (safety protected, bulk degraded gracefully and controllably), *not* serving the workload — where TCP HOL-blocks both and a deep-buffer QUIC drowns the safety stream. Right for a safety stream + degradable bulk; a use case needing the full point cloud *on time* needs more capacity (spectrum, fewer subscribers, lower bulk rate), not a better protocol. See [`moq-operating-envelope.md`](moq-operating-envelope.md). |
 | **Two scenarios, both synthetic** | 8 vehicles each. No dense-traffic, multi-cell, or mixed-mobility case. |
 | **One workload shape** | One publisher, two tracks (small/critical + bulk). The RQ3 claim rests on this being representative of the pattern it describes. |

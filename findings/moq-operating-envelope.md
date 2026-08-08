@@ -195,7 +195,7 @@ A config that never terminates produces for that whole window and then the vehic
 
 | config | terminates | produced | BBox delivered | BBox latency | BBox miss | PCloud latency |
 |---|---|---|---|---|---|---|
-| `MOQ_Partial_BDP` (timeout) | 1/5, at 88.8 s | **88.0 s** | **2173 ± 461** | 102 ± 42 ms | 19.2 ± 2.4% | 1.04 ± 0.11 s |
+| `MOQ_Partial_BDP` (timeout) | **0/5** | **88.0 s** | **2184 ± 522** | 113 ± 50 ms | 20.5 ± 4.7% | 1.02 ± 0.06 s |
 | `MOQ_SW_BDP` (reliable) | **5/5, 63.0 ± 2.1 s** | 61.1 s | 1680 ± 443 | 210 ± 95 ms | 26.7 ± 5.6% | 9.28 ± 1.83 s |
 | `MOQ_QUIC` (reliable, 2 MB) | **5/5, 68.2 ± 1.9 s** | 66.4 s | 3137 ± 259 | 1633 ± 1142 ms | 93.4 ± 2.3% | 9.11 ± 1.28 s |
 | `MOQ_SW_BDP_300` (reliable) | **5/5, 65.4 ± 3.6 s** | 63.5 s | — | — | — | — |
@@ -204,10 +204,10 @@ A config that never terminates produces for that whole window and then the vehic
 (BBox delivered = objects summed over the 7 subscribers.)
 
 The three reliable configs end the subscription in **every** seed, losing roughly the last quarter to
-third of the publisher's road time. Partial reliability produces for the full window: its one
-teardown, seed 4 at 88.8 s, happens *after* production has already finished at 88.0 s, so it costs
-nothing — it offered the same 880 ± 7 objects as the seeds that never terminated, and delivered a
-middling 2102.
+third of the publisher's road time. Partial reliability never terminates, in either scenario, and
+produces for the full window. (Before the delivery-timeout enforcement fix it terminated once, in
+highway seed 4 at 88.8 s; with shedding now driven by object age its send buffer is bounded at ~40
+objects and the limit is never approached — see `delivery-timeout-enforcement.md`.)
 
 **Urban never reaches the limit** — 0/5 for every config. At ~41 s of road time the backlog has no
 time to reach 2000 objects. So the result is scenario-specific: reliable MoQ sustains this workload
@@ -224,8 +224,8 @@ absolute counts above, or normalise by road time.
 memory safety, not measured. A larger buffer postpones the teardown; it does not prevent it, because
 the offered rate exceeds the drain rate throughout. What is robust to the buffer choice is the
 **ordering** — partial reliability produces for the whole road time and reliable does not — not the
-specific seconds. Equally, a *longer road* would expose partial reliability too: at 2000 objects it
-was within 0.8 s of its own limit when the vehicle left.
+specific seconds. A longer road would *not* now expose partial reliability: its occupancy is a fixed
+point at $\sum_i \lambda_i T_i \approx 42$ objects, independent of session length.
 
 One caveat on the reliable arm's *latency* numbers: they look better than the previous
 eviction-based implementation reported (210 ms vs 479 ms) precisely because the session now ends at

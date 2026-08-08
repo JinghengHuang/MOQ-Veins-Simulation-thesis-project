@@ -77,7 +77,7 @@ Three design lessons, each measured rather than assumed:
 
 | config | **URBAN** latency / miss / goodput | **HIGHWAY** latency / miss / goodput |
 |---|---|---|
-| **MoQ partial, 128 kB** | **33 ± 3 ms** / **0.2 ± 0.4%** / 4.1 kbps | **102 ± 42 ms** / 19.2 ± 2.4% / 3.3 kbps |
+| **MoQ partial, 128 kB** | **33 ± 3 ms** / **0.2 ± 0.4%** / 4.1 kbps | **113 ± 50 ms** / 20.5 ± 4.7% / 2.9 kbps |
 | MoQ reliable, 128 kB | 39 ± 8 ms / 0.8 ± 1.5% / 4.1 kbps | 210 ± 95 ms / 26.7 ± 5.6% / 4.0 kbps *(ends at 63 s)* |
 | MoQ / QUIC (default) | 1246 ± 228 ms / 79.9 ± 2.5% / 3.8 kbps | 1633 ± 1142 ms / 93.4 ± 2.3% / 3.9 kbps *(ends at 68 s)* |
 | MQTT / QUIC | 2918 ± 127 ms / 90.0 ± 0.9% / 3.2 kbps | 8297 ± 812 ms / 97.3 ± 0.7% / 1.3 kbps |
@@ -95,7 +95,7 @@ truncated offered count. See `moq-operating-envelope.md` §7.*
 
 | config | **URBAN** latency / miss / goodput | **HIGHWAY** latency / miss / goodput |
 |---|---|---|
-| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.21 ± 0.21 Mbps | 1045 ± 111 ms / 99.3% / 2.13 ± 0.62 Mbps |
+| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.21 ± 0.21 Mbps | 1021 ± 61 ms / 99.3% / 2.19 ± 0.74 Mbps |
 | MoQ reliable, 128 kB | **13 804 ± 1331 ms** / 99.7% / 5.65 Mbps | **9275 ± 1825 ms** / 99.1% / 4.04 Mbps *(ends at 63 s)* |
 | MoQ / QUIC (default) | 3291 ± 247 ms / 72.7% / **9.44 ± 0.16 Mbps** | 9106 ± 1278 ms / 90.0% / 3.11 Mbps *(ends at 68 s)* |
 | MQTT / QUIC | 2878 ± 131 ms / 65.8% / **9.66 ± 0.27 Mbps** | 8265 ± 829 ms / 88.1% / 3.45 Mbps |
@@ -180,7 +180,7 @@ the bulk degrades gracefully and controllably — where TCP head-of-line-blocks 
 QUIC drowns the safety stream. A workload that needs the full point cloud *on time* is not served by
 a better protocol; it needs more capacity (spectrum, fewer subscribers, or a lower bulk rate).
 
-**Highway: MoQ no longer meets the deadline** (102 ± 42 ms mean, but **19.2% miss**). The ordering
+**Highway: MoQ no longer meets the deadline** (113 ± 50 ms mean, but **20.5% miss**). The ordering
 is unchanged — MoQ is still 85× faster than MQTT/QUIC — but the 100 ms target is not reliably met.
 The highway differs from the urban grid in several ways at once, and this two-scenario design cannot
 cleanly separate their contributions. The dominant observable driver is geometry: the ~1.5 km cells
@@ -203,11 +203,11 @@ enabled). This corrects an earlier claim of ours.
 
 *(On the highway the two separate, and the interesting difference is not latency. The highway
 publisher is on the road ~88 s (3 km at 33.3 m/s), which bounds the session. Partial reliability
-produces for that whole window (88.0 s) at 102 ± 42 ms / 19.2 ± 2.4% miss. The reliable baseline
+produces for that whole window (88.0 s) at 113 ± 50 ms / 20.5 ± 4.7% miss. The reliable baseline
 reaches its send-buffer limit and **terminates the subscription at 63.0 ± 2.1 s in all 5 seeds**
 with PUBLISH_DONE TOO_FAR_BEHIND (draft-14 §9.2.1.2), producing only 61.1 s — so its 210 ± 95 ms /
 26.7 ± 5.6% is measured over ~70% of the available session, and it delivers fewer BBox objects
-overall (1680 ± 443 vs 2173 ± 461). Under harsher congestion the reliable mode does not merely
+overall (1680 ± 443 vs 2184 ± 522). Under harsher congestion the reliable mode does not merely
 degrade — it stops serving. Urban never reaches the limit in any config or seed, so the urban result
 still constrains the design. See `moq-operating-envelope.md` §7.)*
 
