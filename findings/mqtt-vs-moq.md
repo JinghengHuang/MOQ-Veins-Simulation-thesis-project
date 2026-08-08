@@ -14,6 +14,15 @@ published before they existed. **~62% is full delivery, not 100%.**
 
 **Validity gate:** every run below reports `quicSendRejected = 0`. This matters — see §5.
 
+**The MoQ / UDP rows are not a MoQ configuration.** `OBJECT_DATAGRAM`
+([draft-14 §10.3.1](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/)) carries exactly
+one whole Object per datagram, with no length field and no fragmentation defined — so a 37.5 kB
+PCloud segment cannot use datagram forwarding preference at all. These rows apply MoQ's *data
+model* over an application-layer fragmentation scheme modelled on DDS/RTPS `DATA_FRAG`
+(`MoqFraming.h`). Its loss behaviour — one lost fragment discards a 32-fragment object, with no
+retransmission — is a property of **that scheme**, not of MoQ. BBox (125 B on the wire) fits in a
+single fragment, so only PCloud is affected.
+
 ---
 
 ## 1. Results
