@@ -133,9 +133,20 @@ Why the upstream releases will not do:
   the implementation); INET shipped only round-robin, so MoQ's send order never reached the wire.
 - **Flow-control fix (§4.5)** — `RESET_STREAM` did not release *connection-level* credit for
   abandoned bytes, so the window leaked shut on every reset.
-- **Flow-control fix (§4.1)** — send-side accounting was a running byte counter that decremented on
-  loss and never re-charged retransmissions, so the sender overran the peer's window and the
-  connection aborted with `FLOW_CONTROL_ERROR` at small windows.
+- **Flow-control fix (§4.1, send side)** — send-side accounting was a running byte counter that
+  decremented on loss and never re-charged retransmissions, so the sender overran the peer's window
+  and the connection aborted with `FLOW_CONTROL_ERROR` at small windows (`inet@e846f96`).
+- **Flow-control fix (§4.1, receive side)** — connection-level accounting added *every* received
+  stream frame, so a retransmission was counted twice and the effective window decayed until the
+  receiver aborted a legal sender with `FLOW_CONTROL_ERROR`. Harmless at a 1 GB window; fatal to the
+  bounded-window configs every tuned result depends on (`inet@99fd4c1`).
+
+Not a defect, but also carried by the fork:
+- **API extension** — `Quic::getSendQueueLength()` exposes true send-queue occupancy, and the drain
+  indication now fires on every downward crossing of the low-water mark rather than only after a
+  full condition. An app pacing its writes never trips "full", so a drain-only-after-full signal
+  never reaches it, and occupancy cannot be reconstructed from threshold crossings alone because
+  bytes leave the queue on ACK, which the app never sees (`inet@31923b9`).
 
 **Simu5G** ([custom-simu5g](https://github.com/JinghengHuang/custom-simu5g))
 - **TR 38.901 rural path loss** — `computeRuralMacro` passed the carrier frequency in **Hz** into a

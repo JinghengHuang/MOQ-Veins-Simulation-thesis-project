@@ -63,6 +63,23 @@ data?"*).
   operating point the study depends on, so the reliable baseline had holes exactly where it mattered.
 - **Fixed:** `inet@e846f96`.
 
+### A1.6 INET QUIC: receive-side connection flow control counted retransmitted bytes twice
+The mirror image of A1.5, on the receiving side. `ConnectionFlowControlResponder::
+updateHighestRecievedOffset()` did `highestRecievedOffset += chunkLength` for **every** received
+stream frame, duplicates included, while the *stream*-level responder correctly took a `max()`.
+A QUIC retransmission resends the same stream bytes in a new packet number, so it passes
+packet-level dedupe and was counted a second time. Since
+`rcvwnd = consumedData + maxRcvwnd - highestRecievedOffset`, the effective connection window
+decayed to `maxRcvwnd - D`, where D is cumulative retransmitted bytes and only ever grows.
+
+- **Effect:** the receiver eventually raised `FLOW_CONTROL_ERROR` against a perfectly legal sender.
+  Invisible at the default 1 GB window (D never catches up), so the baseline `MOQ` / `MOQ_TCP` /
+  `MOQ_UDP` results are unaffected — but it bites exactly the bounded-window configs (`MOQ_SW`,
+  `MOQ_Partial`) on which every tuned result depends. Enlarging the window only delays the abort.
+- **Fixed:** `inet@99fd4c1`, per [RFC 9000 §4.1](https://www.rfc-editor.org/rfc/rfc9000.html#section-4.1)
+  (the connection limit is the sum of per-stream maximum offsets), by counting each stream byte
+  once: `newDataLength = max(0, offset + dataLength - stream->getHighestRecievedOffset())`.
+
 ## A2. Bugs in our own application code
 
 ### A2.1 Publisher deadlocked itself by inferring transport backpressure
@@ -252,11 +269,11 @@ MoQ (draft-ietf-moq-transport-14):
 | not implemented | why it does not affect the results |
 |---|---|
 | `FETCH` / repair, relay caching, `MAX_CACHE_DURATION` | For deadline-bound V2X data, a repair path that delivers *after* the deadline is worthless. Their absence is a **consequence of the workload**, not a gap. |
-| Session lifecycle: `SETUP`, `SUBSCRIBE_UPDATE`, `UNSUBSCRIBE`, `PUBLISH_DONE`, error paths, `GOAWAY`, `TRACK_STATUS` | Setup/teardown machinery; none changes steady-state behaviour under congestion. Note `SUBSCRIBE_UPDATE`'s absence does mean **priorities and timeouts are static for a session**. |
+| Session lifecycle: `SETUP`, `SUBSCRIBE_UPDATE`, `UNSUBSCRIBE`, error paths, `GOAWAY`, `TRACK_STATUS`, Request IDs (§9.1) and the `MAX_REQUEST_ID` / `REQUESTS_BLOCKED` flow control built on them | Setup/teardown machinery; none changes steady-state behaviour under congestion. Note `SUBSCRIBE_UPDATE`'s absence does mean **priorities and timeouts are static for a session**. `PUBLISH_DONE` **is** implemented (§9.12, `TRACK_ENDED` and `TOO_FAR_BEHIND`) — see A2.9. |
 | Namespace discovery (`SUBSCRIBE_NAMESPACE`) | Subscribers are configured with the publisher's namespace a priori. |
 | Object status codes, subscription filters | Loss is inferred from object-ID gaps; subscriptions effectively "start from now". |
-| Datagram forwarding preference | Our UDP config is a *custom* protocol, not MoQ-over-datagram. |
-| MoQT wire format (varint headers) | We use a custom fixed-width framing. **Do not make byte-overhead claims from this model.** |
+| Datagram forwarding preference | Our UDP config is a *custom* protocol, not MoQ-over-datagram. `OBJECT_DATAGRAM` (§10.3.1) carries exactly one whole Object and defines no fragmentation, so a 37.5 kB PCloud segment could not use it at all; we fragment at the application layer instead (see `mqtt-vs-moq.md` §1). |
+| MoQT wire format (varint headers) | We use a custom fixed-width framing that repeats per-stream fields on every Object, so it is **heavier** than conformant MoQT — ~125 B on the wire for a 50 B BBox object against ~57 B, and ~1.5× MQTT's 82 B. **Make no claim about MoQ's real wire efficiency from this model.** Disclosing our own overhead is legitimate and worth doing, because the bias runs *against* MoQ (~0.03% of offered load) and therefore makes the comparative results conservative. Scope note in `MoqFraming.h`. |
 | Subgroups carrying layered/temporal structure | One subgroup per group. Group order and the §7.2 tie-break steps 3–4 are therefore never exercised. |
 
 MQTT (v5.0): QoS 2, retained messages, wills, session state, auth, topic aliases, wildcard
