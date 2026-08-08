@@ -146,13 +146,13 @@ uncontrolled sending into the ~66 Mbps cell manufactures extra queue-drop that U
 amplified ~32× per object. **Loss recovery — not the stream abstraction itself — is the separator**,
 since stream-less TCP matches QUIC (highway PCloud 66.6% vs 66.2% delivered, pooled).
 
-*Denominator caveat.* The often-quoted "UDP delivers only 22.1%" is arithmetically correct but
-misleading on its own: `objectsExpected` is derived from the highest object ID that arrives, and
-the connection-oriented configs tear their subscriptions down early, so UDP is charged against
-~15 460 offered objects per seed where QUIC is charged against ~5383. Normalised to the same
-offered count UDP delivers ~63%, close to TCP and QUIC. **UDP's deficit is that it is offered more
-and completes no more — not that it delivers a third as reliably.** Quote the packet-to-object
-ratio, not the delivery percentage.
+*Denominator caveat.* "UDP delivers only 22.1%" against TCP/QUIC's ~66% compares two ratios with
+structurally different denominators. `objectsExpected` derives from the highest object ID that
+arrives, and the connection-oriented configs backlog so badly that their subscribers never reach
+past object ~880, where a UDP subscriber — which drops rather than queues — reaches ~2577. TCP and
+QUIC therefore deliver most of a *short prefix* of the track; UDP delivers a scattered fraction of
+a **3× longer span**. Both ratios are correct and they do not measure the same thing. Compare
+per-track loss ratios (below), not the headline percentage.
 
 **Why MQTT cannot close the gap — three named mechanisms** (verified against MQTT v5.0; see
 `mqtt-vs-moq.md`):
