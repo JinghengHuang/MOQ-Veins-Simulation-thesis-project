@@ -135,3 +135,17 @@ MQTT clients are given a large transport send buffer (100 MB). MQTT has no backp
 the application and no shedding, so it relies on the transport to buffer, exactly as over TCP. A
 bounded QUIC send queue would not model MQTT — it would convert MQTT's buffering into invisible
 loss.
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **MOQ_SW** | "small window" config — bounded flow-control window, **reliable** baseline (no shedding) |
+| **MOQ_Partial** | bounded window **plus** delivery-timeout shedding |
+| **QoS** | MQTT Quality of Service level; measured here at QoS 0 only |
+| **RQ2** / **RQ3** | Research Question 2 (protocol comparison) / 3 (which data suits which protocol) |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)

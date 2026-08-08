@@ -142,3 +142,16 @@ late to be useful, and misses 5.9% of BBox deadlines in the process.
   url     = {https://arxiv.org/abs/2112.14947}
 }
 ```
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **EMP** | *Edge-assisted Multi-vehicle Perception*, Zhang et al., MobiCom '21 — source of the measured 30-38 kB chunk size |
+| **CPM** | Collective Perception Message (ETSI TS 103 324) |
+| **MOQ_SW** / **MOQ_Partial** | bounded-window reliable baseline / bounded window plus delivery-timeout shedding |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)

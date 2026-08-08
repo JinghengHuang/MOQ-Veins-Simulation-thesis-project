@@ -110,6 +110,8 @@ section numbers refer to that draft.
 | **CPM** | Collective Perception Message ([ETSI TS 103 324](https://www.etsi.org/deliver/etsi_ts/103300_103399/103324/)) — the standardised sensor-sharing message the BBox track stands in for |
 | **CAM** | Cooperative Awareness Message ([ETSI EN 302 637-2](https://www.etsi.org/deliver/etsi_en/302600_302699/30263702/)) |
 | **LiDAR** | Light Detection and Ranging |
+| **EMP** | *Edge-assisted Multi-vehicle Perception* — Zhang et al., MobiCom '21 ([doi:10.1145/3447993.3483242](https://doi.org/10.1145/3447993.3483242)). Source of the measured 30–38 kB point-cloud chunk size the PCloud track is built on |
+| **MobiCom** | ACM International Conference on Mobile Computing and Networking |
 
 ## 6. Method and results notation
 

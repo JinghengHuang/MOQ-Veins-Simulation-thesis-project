@@ -348,3 +348,18 @@ Runs are executed in parallel (default: half the cores); 56 runs take ~28 min on
 3. **Consider leading with the bounded-window result**, and presenting partial reliability as the
    mechanism that bounds *bulk* staleness. That is what the data supports, and it is more defensible
    than "MoQ's shedding wins" — which the urban CIs do not support.
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **BDP** | Bandwidth-Delay Product — capacity x RTT |
+| **CI** | Confidence Interval — headline results are mean +/- 95% CI over n = 5 seeds |
+| **HOL** | Head-of-Line (blocking) |
+| **EMP** | *Edge-assisted Multi-vehicle Perception*, MobiCom '21 — source of the 30-38 kB chunk size |
+| **RMa** / **UMa** | Rural Macro / Urban Macro — TR 38.901 propagation scenarios |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)

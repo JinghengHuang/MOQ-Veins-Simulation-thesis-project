@@ -254,3 +254,17 @@ shadowing, Jakes fading, mid-run handover) still need repetitions with different
 fine claim about the transition goes in the thesis. The reliable curve is complete for
 64–300 kB + 1 MB; its 512 kB and 2 MB points did not finish (no-shedding backlogs run so slowly they
 hit the wall-clock limit — itself a finding about unbounded reliable buffering).
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **BDP** | Bandwidth-Delay Product — capacity x RTT; `_BDP` configs size the window at it (128 kB) |
+| **MOQ_SW** | "small window" config — bounded flow-control window, **reliable** baseline (no shedding) |
+| **MOQ_Partial** | bounded window **plus** delivery-timeout shedding |
+| **CI** | Confidence Interval (95%) |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)

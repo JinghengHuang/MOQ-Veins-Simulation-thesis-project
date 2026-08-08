@@ -275,3 +275,18 @@ independent streams. That limitation is inherent to MQTT's framing, not to our i
 4. **Do not use `opp_env`** — its nix isolation hides system libraries that `libINET.so` requires.
 
 `scripts/run-all.sh` enforces 2 and 3 and refuses to print results otherwise.
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **BDP** | Bandwidth-Delay Product — capacity x RTT; the queue depth that keeps a link busy without adding standing delay |
+| **MOQ_SW** | "small window" config — bounded QUIC flow-control window, **reliable** baseline (no shedding); `_BDP` sizes that window at the BDP |
+| **RMa** | Rural Macro — TR 38.901 propagation scenario, used by the highway scenario |
+| **SINR** | Signal-to-Interference-plus-Noise Ratio |
+| **NED** | NEtwork Description — OMNeT++'s topology and parameter language |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)

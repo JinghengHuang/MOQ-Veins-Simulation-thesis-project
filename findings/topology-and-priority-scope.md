@@ -162,3 +162,17 @@ The result, stated with its scope:
 - `REPORT.md` §"RQ3 (extended)" and §5 (threats to validity); `ISSUES-AND-LIMITS.md` §B1.
 - `moq-operating-envelope.md` for why the 128 kB window, not the scheduler, carries N = 1.
 - Chart 8 (`PubScale_BBox_vs_publishers`) in `MOQ.anf`.
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **BDP** | Bandwidth-Delay Product — capacity x RTT |
+| **D2D** | Device-to-Device (sidelink); not modelled — this study is pure V2I over Uu |
+| **RAN** | Radio Access Network |
+| **EMP** | *Edge-assisted Multi-vehicle Perception*, MobiCom '21 |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)

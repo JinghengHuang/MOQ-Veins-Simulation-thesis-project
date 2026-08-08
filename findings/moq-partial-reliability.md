@@ -163,3 +163,17 @@ is better named than glossed.
   in QUIC: INET ships only round-robin, and `IScheduler` already has the hook
   (`// TODO: create Scheduler depending on ned file parameter`). MOQT §7.2 send-order would be a
   genuine contribution — but see §5: it cannot touch the radio queue either.
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **MOQT** | Media over QUIC Transport — the protocol, draft-ietf-moq-transport-14 |
+| **MOQ_SW** | "small window" config — bounded flow-control window, **reliable** baseline (no shedding) |
+| **MOQ_Partial** | bounded window **plus** delivery-timeout shedding |
+| **RLC** / **PDCP** | Radio Link Control / Packet Data Convergence Protocol — 5G layers below IP |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)

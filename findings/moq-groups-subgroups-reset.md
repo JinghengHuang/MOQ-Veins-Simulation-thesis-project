@@ -117,3 +117,17 @@ plausibly the same underlying defect in the send path.
 **Gap against RQ2:** the comparison set is currently MoQ vs TCP vs UDP. RQ2 explicitly names
 **MQTT, over both QUIC and TCP**, and no MQTT implementation exists in this codebase. That is a
 substantial piece of missing work and should be scoped deliberately.
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **BDP** | Bandwidth-Delay Product — capacity x RTT |
+| **MOQ_SW** | "small window" config — bounded flow-control window, **reliable** baseline (no shedding) |
+| **MOQ_Partial** | bounded window **plus** delivery-timeout shedding |
+| **RAN** | Radio Access Network |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)
