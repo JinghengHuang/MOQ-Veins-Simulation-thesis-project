@@ -19,6 +19,10 @@ It does not. In draft-ietf-moq-transport-14 (2 September 2025):
   **uniformly regardless of priority**. On expiry the publisher MUST reset the transport stream
   (the obligation is stated in §9.2.1.2; the reset mechanism and its error code are in §10.4.3).
 
+**This was acted on.** The model did carry a priority-ordered send-buffer eviction for a time; it
+has been removed in favour of the teardown the draft actually specifies for a full queue —
+PUBLISH_DONE with TOO_FAR_BEHIND (§9.2.1.2, code in §9.12). See `moq-operating-envelope.md` §7.
+
 Consequence: a priority-eviction heuristic would be a *departure* from MOQT, not conformance to
 it. Track protection has to emerge from priority *scheduling* plus age-based shedding, or not at
 all. Everything below stays inside the standard.

@@ -122,18 +122,23 @@ upload.
 
 ## 5. Where shed PCloud goes
 
-Shedding drops objects two ways, and a shed object is **never delivered** to the relay or
-subscribers:
+There is exactly **one** way an object is dropped, and a shed object is **never delivered** to the
+relay or subscribers:
 
-1. **Age-based DELIVERY_TIMEOUT (standard MoQ, draft-14 §10.4.3).** An object still in the app send
-   buffer past its 1.0 s timeout is dropped *before* being handed to QUIC — never sent
-   (`objectsShedStale`). An object that has *already* been handed to QUIC and then times out causes
-   its subgroup **stream to be RESET** (`resetAfterSend`): the reset discards the bytes still queued
-   in QUIC, stops retransmission, and tells the receiver to drop the partial object. A subgroup is
-   one stream carrying several objects, so a reset takes the rest of that subgroup with it.
-2. **Send-buffer overflow eviction** (a finite-buffer safeguard, *not* a MoQ mechanism, reported
-   separately as `quicShed`): when the app buffer overflows it evicts the oldest object of the
-   lowest-priority track (PCloud first), resetting its stream if it had begun transmitting.
+1. **Age-based DELIVERY_TIMEOUT (standard MoQ, draft-14 §9.2.1.2, mechanism in §10.4.3).** An object
+   still in the app send buffer past its 1.0 s timeout is dropped *before* being handed to QUIC —
+   never sent (`objectsShedStale`). An object that has *already* been handed to QUIC and then times
+   out causes its subgroup **stream to be RESET** (`resetAfterSend`): the reset discards the bytes
+   still queued in QUIC, stops retransmission, and tells the receiver to drop the partial object. A
+   subgroup is one stream carrying several objects, so a reset takes the rest of that subgroup with
+   it.
+
+Earlier versions of this model had a second path — a priority-ordered eviction on send-buffer
+overflow, reported as `quicShed`. **It has been removed.** It was not a MoQ mechanism: priority
+governs transmission *order* only (§7.2), and dropping the lowest-priority object made a track with
+no DELIVERY_TIMEOUT — one the draft says delivers every object — quietly lossy. The draft specifies
+this case directly (§9.2.1.2): at its resource limit the publisher **MAY terminate the subscription
+with TOO_FAR_BEHIND**, which is what the model now does. See §7.
 
 At the tight operating window most PCloud takes path 1 and is dropped in the app buffer before it is
 ever sent, because QUIC is backpressured and the buffer fills faster than it drains. So yes — **at
@@ -168,7 +173,66 @@ This is also a clean methodology lesson (A3.3 in ISSUES-AND-LIMITS): the single-
 became 9.5 ± 4.6% across five seeds — fine claims about the near-knee region cannot rest on one run.
 See the "operating point: 128 kB vs 300 kB" chart (both 5-seed).
 
-## 7. Relation to the research questions
+## 7. What a track with NO delivery timeout does at the resource limit
+
+DELIVERY TIMEOUT is optional — draft-14 §9.2.1.2 says the parameter "MAY appear", and spells out the
+absent case: "if neither the subscriber nor publisher specifies DELIVERY TIMEOUT, all Objects in the
+track matching the subscription filter are delivered as indicated by their Group Order and
+Priority." That is exactly the `MOQ_SW_*` / `MOQ_QUIC` reliable baseline, so both arms of the
+comparison are conformant modes of operation, differing only in one optional parameter.
+
+The draft also says what happens when that promise cannot be kept. Two sentences later: "If a
+subscriber fails to consume Objects at a sufficient rate, causing the publisher to exceed its
+resource limits, the publisher MAY terminate the subscription with error TOO_FAR_BEHIND", defined in
+§9.12 as "the publisher's queue of objects to be sent to the given subscriber exceeds its
+implementation defined limit". `sendBufferLimit` (2000 objects) is that limit.
+
+**The relevant baseline is the publisher's time on the road, not the 200 s sim limit.** The highway
+publisher traverses 3 km at 33.3 m/s, so it is present for **~88 s**; the urban one for **~41 s**.
+A config that never terminates produces for that whole window and then the vehicle leaves.
+
+**Measured (5 seeds, highway, buffer limit 2000 objects):**
+
+| config | terminates | produced | BBox delivered | BBox latency | BBox miss | PCloud latency |
+|---|---|---|---|---|---|---|
+| `MOQ_Partial_BDP` (timeout) | 1/5, at 88.8 s | **88.0 s** | **2173 ± 461** | 102 ± 42 ms | 19.2 ± 2.4% | 1.04 ± 0.11 s |
+| `MOQ_SW_BDP` (reliable) | **5/5, 63.0 ± 2.1 s** | 61.1 s | 1680 ± 443 | 210 ± 95 ms | 26.7 ± 5.6% | 9.28 ± 1.83 s |
+| `MOQ_QUIC` (reliable, 2 MB) | **5/5, 68.2 ± 1.9 s** | 66.4 s | 3137 ± 259 | 1633 ± 1142 ms | 93.4 ± 2.3% | 9.11 ± 1.28 s |
+| `MOQ_SW_BDP_300` (reliable) | **5/5, 65.4 ± 3.6 s** | 63.5 s | — | — | — | — |
+| `MOQ_Partial_BDP_300` (timeout) | 0/5 | 88.3 s | — | — | — | — |
+
+(BBox delivered = objects summed over the 7 subscribers.)
+
+The three reliable configs end the subscription in **every** seed, losing roughly the last quarter to
+third of the publisher's road time. Partial reliability produces for the full window: its one
+teardown, seed 4 at 88.8 s, happens *after* production has already finished at 88.0 s, so it costs
+nothing — it offered the same 880 ± 7 objects as the seeds that never terminated, and delivered a
+middling 2102.
+
+**Urban never reaches the limit** — 0/5 for every config. At ~41 s of road time the backlog has no
+time to reach 2000 objects. So the result is scenario-specific: reliable MoQ sustains this workload
+in the urban grid and cannot sustain it on the highway.
+
+**Do not compare `delivered%` across configs with different survival times.** It is
+`objectsReceived / objectsOffered`, and a config that terminates stops offering — so the denominator
+truncates and the ratio *flatters* the config that gave up. `MOQ_QUIC` reports 67.5% delivered
+against `MOQ_Partial_BDP`'s 35.2%, while having produced 66.4 s of content against 88.0 s. Use the
+absolute counts above, or normalise by road time.
+
+**Read the survival time with its buffer size attached.** It is roughly
+`sendBufferLimit / (offered rate − drain rate)`, i.e. close to linear in a parameter chosen for
+memory safety, not measured. A larger buffer postpones the teardown; it does not prevent it, because
+the offered rate exceeds the drain rate throughout. What is robust to the buffer choice is the
+**ordering** — partial reliability produces for the whole road time and reliable does not — not the
+specific seconds. Equally, a *longer road* would expose partial reliability too: at 2000 objects it
+was within 0.8 s of its own limit when the vehicle left.
+
+One caveat on the reliable arm's *latency* numbers: they look better than the previous
+eviction-based implementation reported (210 ms vs 479 ms) precisely because the session now ends at
+63 s instead of dribbling out a growing backlog. Latency and survival must be read together; neither
+alone describes the behaviour.
+
+## 8. Relation to the research questions
 
 - **RQ1 (design):** a MoQ-over-5G V2X design must size the transport buffer near the BDP. Partial
   reliability layered on a deep buffer achieves nothing — measured, not assumed (2 MB: 82% miss
@@ -181,7 +245,7 @@ See the "operating point: 128 kB vs 300 kB" chart (both 5-seed).
   at a default window it is no better than the reliable baseline, and loses to nothing but its own
   queue.
 
-## 8. Caveats
+## 9. Caveats
 
 Single seed per window point. The knee runs (350/400/450 kB) fill the transition region the earlier
 version flagged as unmeasured, and they are monotonic and consistent — but the *exact* knee position

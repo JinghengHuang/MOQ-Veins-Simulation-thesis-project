@@ -74,21 +74,27 @@ Three design lessons, each measured rather than assumed:
 
 | config | **URBAN** latency / miss / goodput | **HIGHWAY** latency / miss / goodput |
 |---|---|---|
-| **MoQ partial, 128 kB** | **33 ± 3 ms** / **0.2 ± 0.4%** / 4.1 kbps | **97 ± 24 ms** / 18.2 ± 3.0% / 3.2 kbps |
-| MoQ reliable, 128 kB | 39 ± 8 ms / 0.8 ± 1.5% / 4.1 kbps | 479 ± 268 ms / 29.3 ± 5.2% / 3.9 kbps |
-| MoQ / QUIC (default) | 1246 ± 228 ms / 79.9 ± 2.5% / 3.8 kbps | 2111 ± 800 ms / 92.0 ± 0.7% / 3.7 kbps |
+| **MoQ partial, 128 kB** | **33 ± 3 ms** / **0.2 ± 0.4%** / 4.1 kbps | **102 ± 42 ms** / 19.2 ± 2.4% / 3.3 kbps |
+| MoQ reliable, 128 kB | 39 ± 8 ms / 0.8 ± 1.5% / 4.1 kbps | 210 ± 95 ms / 26.7 ± 5.6% / 4.0 kbps *(ends at 63 s)* |
+| MoQ / QUIC (default) | 1246 ± 228 ms / 79.9 ± 2.5% / 3.8 kbps | 1633 ± 1142 ms / 93.4 ± 2.3% / 3.9 kbps *(ends at 68 s)* |
 | MQTT / QUIC | 2918 ± 127 ms / 90.0 ± 0.9% / 3.2 kbps | 8297 ± 812 ms / 97.3 ± 0.7% / 1.3 kbps |
 | MoQ / UDP | 1421 ± 371 ms / 93.2 ± 1.1% / 3.1 kbps | 3519 ± 846 ms / 99.0 ± 0.2% / 1.5 kbps |
 | MoQ / TCP | 22 289 ± 301 ms / 100% / 0.9 kbps | 15 864 ± 1770 ms / 100% / 0.5 kbps |
 | MQTT / TCP | 26 137 ± 96 ms / 100% / 0.9 kbps | 17 878 ± 2159 ms / 100% / 0.5 kbps |
 
+*Rows marked "ends at N s" reach their send-buffer limit and terminate the subscription with
+PUBLISH_DONE TOO_FAR_BEHIND (draft-14 §9.2.1.2) in all 5 seeds. The highway publisher is on the
+road ~88 s, so those configs serve only ~70–75% of the available session; their latency and
+goodput are measured over that shorter window, and their `delivered%` is computed against a
+truncated offered count. See `moq-operating-envelope.md` §7.*
+
 ### PCloud — bulk, 500 ms deadline
 
 | config | **URBAN** latency / miss / goodput | **HIGHWAY** latency / miss / goodput |
 |---|---|---|
-| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.21 ± 0.21 Mbps | 1041 ± 61 ms / 99.2% / 2.24 ± 0.38 Mbps |
-| MoQ reliable, 128 kB | **13 804 ± 1331 ms** / 99.7% / 5.65 Mbps | **9333 ± 926 ms** / 99.1% / 3.94 Mbps |
-| MoQ / QUIC (default) | 3291 ± 247 ms / 72.7% / **9.44 ± 0.16 Mbps** | 8163 ± 584 ms / 88.0% / 3.36 Mbps |
+| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.21 ± 0.21 Mbps | 1045 ± 111 ms / 99.3% / 2.13 ± 0.62 Mbps |
+| MoQ reliable, 128 kB | **13 804 ± 1331 ms** / 99.7% / 5.65 Mbps | **9275 ± 1825 ms** / 99.1% / 4.04 Mbps *(ends at 63 s)* |
+| MoQ / QUIC (default) | 3291 ± 247 ms / 72.7% / **9.44 ± 0.16 Mbps** | 9106 ± 1278 ms / 90.0% / 3.11 Mbps *(ends at 68 s)* |
 | MQTT / QUIC | 2878 ± 131 ms / 65.8% / **9.66 ± 0.27 Mbps** | 8265 ± 829 ms / 88.1% / 3.45 Mbps |
 | MoQ / UDP | 1208 ± 508 ms / 55.1% / 7.88 Mbps | 2125 ± 224 ms / 83.6% / 2.55 Mbps |
 | MoQ / TCP | 22 254 ms / 99.9% / 2.48 Mbps | 15 693 ms / 99.8% / 1.37 Mbps |
@@ -171,7 +177,7 @@ the bulk degrades gracefully and controllably — where TCP head-of-line-blocks 
 QUIC drowns the safety stream. A workload that needs the full point cloud *on time* is not served by
 a better protocol; it needs more capacity (spectrum, fewer subscribers, or a lower bulk rate).
 
-**Highway: MoQ no longer meets the deadline** (97 ± 24 ms mean, but **18.2% miss**). The ordering
+**Highway: MoQ no longer meets the deadline** (102 ± 42 ms mean, but **19.2% miss**). The ordering
 is unchanged — MoQ is still 85× faster than MQTT/QUIC — but the 100 ms target is not reliably met.
 The highway differs from the urban grid in several ways at once, and this two-scenario design cannot
 cleanly separate their contributions. The dominant observable driver is geometry: the ~1.5 km cells
@@ -192,17 +198,27 @@ indistinguishable** from partial reliability's 33 ± 3 ms / 0.2 ± 0.4% (CIs ove
 delivery-timeout shedding on a *deep* buffer achieves nothing (≈80% miss at 2 MB even with shedding
 enabled). This corrects an earlier claim of ours.
 
-*(On the highway the two do separate — 97 ms / 18.2% vs 479 ms / 29.3% — so under harsher
-congestion shedding does begin to matter for the safety track. Worth noting, but the urban result
-is the one that constrains the design.)*
+*(On the highway the two separate, and the interesting difference is not latency. The highway
+publisher is on the road ~88 s (3 km at 33.3 m/s), which bounds the session. Partial reliability
+produces for that whole window (88.0 s) at 102 ± 42 ms / 19.2 ± 2.4% miss. The reliable baseline
+reaches its send-buffer limit and **terminates the subscription at 63.0 ± 2.1 s in all 5 seeds**
+with PUBLISH_DONE TOO_FAR_BEHIND (draft-14 §9.2.1.2), producing only 61.1 s — so its 210 ± 95 ms /
+26.7 ± 5.6% is measured over ~70% of the available session, and it delivers fewer BBox objects
+overall (1680 ± 443 vs 2173 ± 461). Under harsher congestion the reliable mode does not merely
+degrade — it stops serving. Urban never reaches the limit in any config or seed, so the urban result
+still constrains the design. See `moq-operating-envelope.md` §7.)*
 
 **(b) What partial reliability actually buys is a bounded bulk track.** With a shallow window the
 reliable baseline cannot drop anything, so the bulk backlog simply queues: PCloud arrives
-**13.8 s ± 1.3 s** late (urban) / **9.3 s ± 0.9 s** (highway). Shedding holds it at **951 ms** /
-**1041 ms** — a **14× / 9× reduction** — at the cost of delivering less of it. Both miss PCloud's
+**13.8 s ± 1.3 s** late (urban) / **9.3 s ± 1.8 s** (highway). Shedding holds it at **951 ms** /
+**1045 ms** — a **14× / 9× reduction** — at the cost of delivering less of it. Both miss PCloud's
 deadline, so neither is *useful* for bulk data; but 1 s of bounded staleness and a 14 s unbounded
 backlog are different failure modes. Acting on 14-second-old perception data is arguably worse than
 having none.
+
+On the highway there is a further cost the latency figure hides: that unbounded backlog is what
+drives the reliable baseline into its resource limit, ending the subscription at 63 s. Bounding the
+backlog is therefore not only about freshness — it is what keeps the session alive at all.
 
 **So: the window protects the latency-critical track; the delivery timeout bounds staleness under
 overload.** Two distinct contributions, and they should be reported as such.
