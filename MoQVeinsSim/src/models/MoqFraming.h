@@ -21,6 +21,35 @@
  * coalesce into one BytesChunk (instead of a SequenceChunk, which INET QUIC mis-parses).
  * The receiver accumulates the byte stream and delimits objects via bodyLen, mirroring
  * how MoQ Transport frames objects on a subgroup stream.
+ *
+ * SCOPE: this is a model of the draft-14 DATA MODEL, not of its wire format. Unlike MqttFraming.h
+ * (a conformant MQTT v5.0 subset that a real broker could parse), nothing here is byte-compatible
+ * with MoQ Transport; no MoQ implementation could read it. The mechanisms the thesis measures --
+ * subgroup-per-stream, publisher priority, DELIVERY_TIMEOUT with RESET_STREAM, PUBLISH_DONE
+ * teardown -- are faithful; the encoding is not. Specifically:
+ *
+ *  - Integers are fixed-width little-endian, where the draft uses QUIC varints (RFC 9000 16).
+ *  - Control type codes are our own (ANNOUNCE=1, SUBSCRIBE=2, ...); the draft assigns
+ *    SUBSCRIBE=0x3, SUBSCRIBE_OK=0x4, PUBLISH_DONE=0xB, PUBLISH_NAMESPACE=0x6 (which is what
+ *    draft-14 calls what we still name ANNOUNCE). Every control type shares one uniform struct
+ *    here, where the draft defines a distinct payload per message type.
+ *  - The draft puts Track Alias, Group ID, Subgroup ID and Publisher Priority ONCE per stream in
+ *    SUBGROUP_HEADER (section 10.4.2) and gives each object only an Object ID Delta and a payload
+ *    length. We repeat all of them on every object, and carry the alias as its full
+ *    "namespace/name" string -- exactly the wire cost the numeric Track Alias exists to avoid
+ *    (section 10.1). On a 50 B object this costs 125 B on the wire against ~57 B conformant. It is
+ *    ~0.03% of offered load at our rates and biases AGAINST MoQ, so results stay conservative.
+ *  - creationTime is a measurement instrument, not a draft field; a real deployment would carry it
+ *    in an Object Extension Header (section 10.2.1.2).
+ *  - Data streams are client-bidirectional here; the draft uses unidirectional streams, each
+ *    opening with a varint stream type (0x10-0x1D). We infer control vs data from the stream id.
+ *
+ * Not modelled at all: CLIENT_SETUP/SERVER_SETUP version negotiation, Request IDs (section 9.1)
+ * and the MAX_REQUEST_ID/REQUESTS_BLOCKED flow control built on them, SUBSCRIBE_ERROR,
+ * UNSUBSCRIBE, GOAWAY, FETCH and the cache/repair path, Object Extension Headers, and Object
+ * Status (section 10.2.1.1) -- the zero-length object by which a conformant publisher tells a
+ * subscriber an object will never arrive. Our subscriber infers those gaps from object-ID
+ * discontinuity instead, which changes how loss is DETECTED but not how much of it occurs.
  */
 #pragma once
 
@@ -288,7 +317,14 @@ inline int tryParseEnvelope(const std::vector<uint8_t>& buf, MoqControlFrame& ct
 // Datagram transport (UDP): no segmentation in the transport, so a frame larger than one
 // datagram is split at the application layer into bounded fragments and reassembled by the
 // receiver (mirroring DDS/RTPS DATA_FRAG and ETSI CPM segmentation; IP fragmentation is
-// avoided per RFC 8900). Each datagram carries:
+// avoided per RFC 8900).
+// This is NOT MoQ. draft-14's OBJECT_DATAGRAM (section 10.3.1) carries exactly one whole object
+// per datagram with no length field and defines no fragmentation, so a 37.5 KB object cannot use
+// datagram forwarding preference at all. The UDP configuration therefore measures MoQ's data
+// model over a DDS-style fragmenting datagram transport, and its loss behaviour (one lost
+// fragment kills a 32-fragment object, with no retransmission) is a property of THIS scheme,
+// not of MoQ.
+// Each datagram carries:
 //   [u8 msgClass][i64 objectId][u32 fragIndex][u32 fragCount][u32 fragOffset][u32 totalLen]
 //   [u32 aliasLen][alias][chunk bytes]
 // totalLen is the size of the full inner (length-prefixed) frame; fragOffset is the byte

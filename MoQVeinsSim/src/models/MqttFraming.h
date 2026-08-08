@@ -7,9 +7,11 @@
  * which is why this does not share primitives with MoqFraming (whose custom framing is
  * little-endian).
  *
- * Implemented: CONNECT/CONNACK, PUBLISH/PUBACK, SUBSCRIBE/SUBACK, DISCONNECT, with the Message
- * Expiry Interval property. QoS 0 and 1 only. Not implemented (none affect steady-state latency
- * or throughput): QoS 2, retained messages, wills, session state, auth, topic aliases, wildcards.
+ * Implemented: CONNECT/CONNACK, PUBLISH/PUBACK, SUBSCRIBE/SUBACK, with the Message Expiry
+ * Interval property. QoS 0 and 1 only. Not implemented (none affect steady-state latency or
+ * throughput): DISCONNECT (the type code is defined below but never encoded -- a connection ends
+ * with the vehicle's lifecycle, not with a graceful teardown), QoS 2, retained messages, wills,
+ * session state, auth, topic aliases, wildcards.
  */
 #pragma once
 

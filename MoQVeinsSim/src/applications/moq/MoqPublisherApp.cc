@@ -119,6 +119,7 @@ void MoqPublisherApp::handleMessageWhenUp(omnetpp::cMessage *msg)
                 }
                 break;
             case SUB_SUCCESS:
+                if (subscriptionsEnded) break;   // nothing is offered after PUBLISH_DONE
                 if (it != tracks.end()) {
                     track = &it->second;
                     // One Group per sendInterval, holding objectsPerGroup Objects (draft-14
@@ -773,7 +774,12 @@ void MoqPublisherApp::sendTrackAnnouncementData(){
 }
 // Send track announcement data
 void MoqPublisherApp::sendTrackData(long tid){
-    
+    // The subscription is over (PUBLISH_DONE sent), so stop producing. Without this the generator
+    // re-arms the timer that terminateSubscriptions just cancelled -- it is called at the end of
+    // the same event that tripped the limit. sendObjectFrame would still drop the objects, but
+    // objectsOffered would keep climbing after teardown and skew every ratio measured against it.
+    if (subscriptionsEnded) return;
+
     EV_INFO << "Sending track data of " << tid << std::endl;
     const auto track = tracks.find(tid);
     if(track != tracks.end()){
