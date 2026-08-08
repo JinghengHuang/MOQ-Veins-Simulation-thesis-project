@@ -60,6 +60,7 @@ void MoqPublisherApp::handleTimeout(omnetpp::cMessage *msg)
             break;
         case TIMER_TIMEOUT_CHECK:
             checkOutstandingTimeouts();
+            sweepSendBufferTimeouts();  // age-based shedding, independent of transport backpressure
             flushSendBuffer(); // liveness: never depend solely on the drain indication
             scheduleAt(omnetpp::simTime() + timeoutCheckInterval, timerTimeoutCheck);
             break;
@@ -188,6 +189,8 @@ void MoqPublisherApp::handleStartOperation(inet::LifecycleOperation *operation)
     EV_DEBUG << "initialize MoqPublisherApp" << std::endl;
 
     objectSentSignal = registerSignal("objectSent");
+    sendBufferDepthSignal = registerSignal("sendBufferDepth");
+    emit(sendBufferDepthSignal, (long) 0);  // seed, so timeavg/max are defined if it never fills
 
     // Select the underlying transport. QUIC keeps its original setup; TCP/UDP are additive.
     std::string protoStr = par("protocol").stdstringValue();
@@ -528,12 +531,40 @@ void MoqPublisherApp::resetSubgroupStream(const SubgroupKey& key, long streamId,
     subgroupResets++;
 }
 
+// Drop every buffered object past its delivery timeout, regardless of transport state.
+//
+// flushSendBuffer also tests staleness, but only for objects that reach the head of the priority
+// queue, and its loop exits as soon as QUIC is backpressured -- so under heavy congestion, exactly
+// when the backlog is growing, the timeout stopped firing and the buffer ran away. This sweep runs
+// off the delivery-timeout timer instead, so shedding is driven by object age (draft-14 9.2.1.2)
+// rather than by whether the transport happens to be accepting data.
+void MoqPublisherApp::sweepSendBufferTimeouts() {
+    if (subscriptionsEnded) return;
+    omnetpp::simtime_t now = omnetpp::simTime();
+    for (auto prioIt = sendBuffer.begin(); prioIt != sendBuffer.end(); ) {
+        auto& queue = prioIt->second;
+        for (auto it = queue.begin(); it != queue.end(); ) {
+            // timeout == 0 means the track configured none: it is fully reliable and never shed.
+            bool stale = it->timeout > SIMTIME_ZERO && (now - it->createdAt) > it->timeout;
+            if (!stale) { ++it; continue; }
+            if (it->sentOffset > 0)
+                resetSubgroupStream(it->subgroup, it->streamId, MOQ_ERR_DELIVERY_TIMEOUT);
+            quicShedStale[it->tid]++;
+            it = queue.erase(it);
+            sendBufferCount--;
+        }
+        prioIt = queue.empty() ? sendBuffer.erase(prioIt) : std::next(prioIt);
+    }
+    emit(sendBufferDepthSignal, sendBufferCount);
+}
+
 // Buffer an object while QUIC is blocked, keeping FIFO order within each priority. When the buffer
 // exceeds its limit the subscription is over -- see terminateSubscriptions().
 void MoqPublisherApp::enqueuePending(Pending&& p) {
     long prio = p.priority;
     sendBuffer[prio].push_back(std::move(p));
     sendBufferCount++;
+    emit(sendBufferDepthSignal, sendBufferCount);
     if (sendBufferCount <= (long) sendBufferLimit) return;
 
     // draft-14 section 9.2.1.2: "If a subscriber fails to consume Objects at a sufficient rate,
@@ -572,6 +603,7 @@ void MoqPublisherApp::terminateSubscriptions(long statusCode) {
     sendBuffer.clear();
     sendBufferCount = 0;
     outstanding.clear();
+    emit(sendBufferDepthSignal, (long) 0);
 
     // 2. One PUBLISH_DONE per subscription, i.e. per announced track.
     for (auto& t : tracks) {
@@ -658,6 +690,7 @@ void MoqPublisherApp::flushSendBuffer() {
             if (it->second.empty()) sendBuffer.erase(it);
         }
     }
+    emit(sendBufferDepthSignal, sendBufferCount);
 }
 
 // ---- TCP callbacks ----
