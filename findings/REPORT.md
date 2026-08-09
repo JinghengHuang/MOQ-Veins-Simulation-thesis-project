@@ -56,16 +56,12 @@ under congestion:
   itself defines no priority mechanism (RFC 9000 §2.3 leaves it to the implementation), so this
   required a new `PriorityScheduler`.
 
-Three design lessons, each measured rather than assumed:
+Two design lessons, each measured rather than assumed:
 
 1. **Size the transport queue near the bandwidth-delay product.** Everything else is secondary
    (RQ3). A 2 MB window is ~1.3 s of standing queue at 12 Mbps; no application mechanism can meet
    a 100 ms deadline behind it.
-2. **Subgroup size is a loss-amplification factor.** A reset abandons *the stream*, so batching a
-   protected track's objects into a shared subgroup multiplies its loss by the group size: with
-   `objectsPerGroup = 10`, 291 of 411 BBox objects were destroyed as collateral of 40 resets.
-   A track you intend to protect must not share a subgroup with objects you are willing to abandon.
-3. **An application must not infer transport backpressure.** Our publisher deadlocked itself by
+2. **An application must not infer transport backpressure.** Our publisher deadlocked itself by
    deducing "QUIC is full" from its own occupancy estimate, which only QUIC's drain signal could
    clear — and that signal never came.
 
