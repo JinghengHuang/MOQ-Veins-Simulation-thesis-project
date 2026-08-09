@@ -6,7 +6,7 @@
 
 > **This document was rewritten after the sweep.** An earlier version claimed that MoQ's priority
 > loses authority as soon as there is more than one publisher. That is wrong, and the measurement
-> says so: at four publishers the priority scheduler cuts BBox latency from 538 ms to 178 ms and
+> says so: at four publishers the priority scheduler cuts BBox latency from 538 ms to 180 ms and
 > triples on-time delivery. The claim has been narrowed to the leg it actually applies to.
 
 ---
@@ -58,21 +58,21 @@ point with `**.quic.streamScheduler = "Priority"`. 5 seeds; aggregated by
 
 | N | scheduler | BBox on-time | BBox miss | BBox mean latency |
 |---|---|---|---|---|
-| 1 | round-robin | 0.686 ± 0.005 | 0.8% ± 0.7 | 47 ± 2 ms |
-| 2 | round-robin | 0.371 ± 0.043 | 48.5% ± 7.5 | 129 ± 10 ms |
-| 3 | round-robin | 0.141 ± 0.012 | 82.6% ± 1.6 | 347 ± 37 ms |
+| 1 | round-robin | 0.675 ± 0.033 | 1.6% ± 2.3 | 48 ± 5 ms |
+| 2 | round-robin | 0.370 ± 0.022 | 48.8% ± 4.6 | 133 ± 15 ms |
+| 3 | round-robin | 0.140 ± 0.013 | 82.8% ± 1.4 | 353 ± 37 ms |
 | 4 | round-robin | 0.109 ± 0.003 | 87.1% ± 0.5 | 538 ± 147 ms |
-| 1 | **priority** | 0.686 ± 0.005 | 0.8% ± 0.7 | 47 ± 2 ms |
-| 2 | **priority** | 0.452 ± 0.073 | 33.0% ± 21.1 | 83 ± 32 ms |
-| 3 | **priority** | 0.353 ± 0.018 | 51.0% ± 2.3 | 118 ± 9 ms |
-| 4 | **priority** | 0.330 ± 0.034 | 55.3% ± 4.3 | 178 ± 74 ms |
+| 1 | **priority** | 0.668 ± 0.038 | 1.9% ± 2.7 | 49 ± 7 ms |
+| 2 | **priority** | 0.451 ± 0.075 | 33.4% ± 21.6 | 92 ± 45 ms |
+| 3 | **priority** | 0.347 ± 0.013 | 52.2% ± 1.7 | 121 ± 10 ms |
+| 4 | **priority** | 0.332 ± 0.035 | 55.1% ± 4.2 | 180 ± 80 ms |
 
 (95% CIs over 5 seeds. On-time ratio = (received − misses) / expected; it is the headline because
 miss ratio alone flatters a run that delivered almost nothing. On-time tops out at ~0.69 even at
 N = 1 because subscribers join mid-run — see `ISSUES-AND-LIMITS.md` A2.6.)
 
-**Priority is enforced and effective with multiple publishers.** At N = 4 it holds latency to 178 ms
-where round-robin reaches 538 ms, and it roughly **triples** on-time delivery (0.330 vs 0.109). This
+**Priority is enforced and effective with multiple publishers.** At N = 4 it holds latency to 180 ms
+where round-robin reaches 538 ms, and it roughly **triples** on-time delivery (0.332 vs 0.109). This
 is the relay ordering four *different vehicles'* safety objects ahead of four different vehicles'
 bulk objects, which is exactly the cross-publisher arbitration the earlier version of this document
 claimed was impossible.
@@ -84,7 +84,7 @@ on time regardless of send order — consistent with `moq-operating-envelope.md`
 ## 4. What is left over, and why it cannot be attributed
 
 Priority recovers most of the fan-in penalty, not all of it. At identical total load, N = 4 with
-priority is still 55% miss / 178 ms against N = 1's 0.8% / 47 ms.
+priority is still 55% miss / 180 ms against N = 1's 1.6% / 48 ms.
 
 **We cannot say what causes the residual.** The sweep changes two things at once:
 
@@ -147,7 +147,7 @@ The result, stated with its scope:
 > connection, not to one publisher. Because the edge relay serves each subscriber over a single
 > session carrying every publisher's tracks, priority arbitrates across publishers on the
 > bottleneck downlink, and the measurements confirm it: at four publishers under constant total
-> load, the priority scheduler holds safety-track latency to 178 ms against round-robin's 538 ms and
+> load, the priority scheduler holds safety-track latency to 180 ms against round-robin's 538 ms and
 > triples on-time delivery. It does not restore single-publisher performance (55% of deadlines are
 > still missed), but the sweep varies stream count and transmitting-UE count together and so cannot
 > attribute the residual. What MoQ demonstrably *cannot* order is traffic on the uplink leg, where

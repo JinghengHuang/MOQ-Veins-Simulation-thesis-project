@@ -29,29 +29,31 @@ Reading down the window (`MOQ_Partial`, safety track first):
 | window | BBox lat / miss / deliv | PCloud lat / miss / deliv / goodput | regime |
 |---|---|---|---|
 | 64 kB  | 31 ms / **0.0%** / 61% | 945 ms / 99.6% / 19% / 3.7 Mbps | safe |
-| 128 kB | 40 ms / 1.5% / 62%     | 966 ms / 99.6% / 23% / 4.3 Mbps | safe |
-| 256 kB | 49 ms / 3.1% / 62%     | 967 ms / 99.3% / 34% / 6.4 Mbps | safe |
-| 300 kB | 46 ms / 4.5% / 62%     | 980 ms / 99.2% / 37% / **7.0 Mbps** | **edge** |
-| 350 kB | 88 ms / **23%** / 61%  | 998 ms / 95% / 44% / 8.3 Mbps | **knee** |
-| 400 kB | 192 ms / 43% / 60%     | 1432 ms / 92% / 44% / 8.0 Mbps | past |
-| 450 kB | 308 ms / 51% / 58%     | 2172 ms / 59% / 51% / 8.4 Mbps | past |
-| 512 kB | 438 ms / 75% / 62%     | 3642 ms / 65% / 55% / 9.1 Mbps | collapsed |
-| 1 MB   | 431 ms / 71% / 56%     | 1728 ms / 64% / 51% / 9.3 Mbps | collapsed |
-| 2 MB   | 955 ms / 82% / 61%     | 2727 ms / 71% / 57% / 9.8 Mbps | collapsed |
+| 128 kB | 40 ms / 1.5% / 62%     | 966 ms / 99.6% / 22% / 4.3 Mbps | safe |
+| 256 kB | 88 ms / 9.9% / 62%     | 1276 ms / 99.3% / 34% / 6.5 Mbps | noisy |
+| 300 kB | 46 ms / 4.5% / 62%     | 980 ms / 99.2% / 37% / **7.0 Mbps** | noisy |
+| 350 kB | 94 ms / **23.6%** / 61% | 1041 ms / 95.3% / 43% / 8.4 Mbps | **knee** |
+| 400 kB | 192 ms / 43.3% / 60%   | 1432 ms / 91.7% / 43% / 8.0 Mbps | past |
+| 450 kB | 286 ms / 45.1% / 56%   | 2222 ms / 60.2% / 48% / 8.6 Mbps | past |
+| 512 kB | 438 ms / 75.4% / 61%   | 3642 ms / 65.2% / 54% / 9.1 Mbps | collapsed |
+| 1 MB   | 431 ms / 71.0% / 55%   | 1728 ms / 64.3% / 49% / 9.3 Mbps | collapsed |
+| 2 MB   | 955 ms / 81.6% / 60%   | 2727 ms / 70.7% / 55% / 9.8 Mbps | collapsed |
 
 The sweep is **not** a smooth trade — it has two regimes divided by a knee:
 
-- **Safe zone (window <= ~300 kB, single-seed).** BBox meets its 100 ms deadline (latency 31–49 ms,
-  miss <= 4.5%). Within this zone, a *larger* window buys *more bulk throughput* — PCloud goodput
-  climbs 3.7 -> 7.0 Mbps and its delivered fraction 19% -> 37% — at little cost to the safety track
-  *in this single-seed sweep*. (The multi-seed validation in §6 is less forgiving: near the knee the
-  run-to-run variance is large, so the *upper* end of this zone is not actually safe — 300 kB across
-  5 seeds misses 10.4%, not 4.5%. The genuinely safe operating point is 128 kB, not 300 kB.)
-- **The knee (~300–350 kB).** BBox deadline-miss jumps 4.5% -> 23% between 300 and 350 kB; mean
-  latency crosses 100 ms between 350 and 400 kB. The safety track breaks here. Note the *miss ratio*
-  turns before the *mean* does (350 kB is 88 ms mean but 23% miss — the tail is already blown), so
-  the single-seed edge is ~300 kB — which §6 then shows is already too close to the knee to be safe
-  across seeds.
+- **Safe zone (window <= ~128 kB).** BBox meets its 100 ms deadline comfortably and consistently
+  (31–40 ms, miss <= 1.5%). A larger window buys *more bulk throughput* — PCloud goodput climbs
+  3.7 -> 7.0 Mbps and its delivered fraction 19% -> 37% across the zone below the knee — but only
+  the two smallest windows deliver the safety track reliably.
+- **Noisy band (~256–300 kB).** These two points are **non-monotonic**: 256 kB is worse than
+  300 kB (88 ms / 9.9% against 46 ms / 4.5%), which cannot be a real property of window size. It is
+  single-seed variance in the approach to the knee, and it is corroborated by §6, where 300 kB
+  across 5 seeds misses 10.4% rather than the 4.5% one run suggests. **No window in this band
+  should be described as safe**, and no fine claim should rest on either point.
+- **The knee (~300–350 kB).** BBox deadline-miss reaches 23.6% by 350 kB and mean latency crosses
+  100 ms between 350 and 400 kB. The safety track breaks here. Note the *miss ratio* turns before
+  the *mean* does (350 kB is 94 ms mean but 23.6% miss — the tail is already blown), so mean latency
+  alone would place the knee one step too late.
 - **Collapse (window >= ~400 kB).** BBox latency grows roughly linearly with the window
   (192 -> 308 -> 438 -> 955 ms); miss reaches 43–82%. Bulk goodput plateaus at ~9 Mbps, so past the
   knee you buy almost no throughput for a great deal of safety-track latency.
@@ -81,23 +83,34 @@ The knee sits at ~300–350 kB — **4–5x above the ~75 kB bandwidth-delay pro
 shedding and BBox's tiny size buy: they keep the safety track alive well past the naive BDP before
 bufferbloat wins.
 
-## 3. Window buys the deadline; shedding extends the safe edge
+## 3. The window buys the deadline; shedding does not measurably extend it
 
 The safety track is rescued almost entirely by the *window*, not by shedding. At 128 kB the reliable
 baseline reaches **42 ms / 0.9% miss**, statistically indistinguishable from `MOQ_Partial`'s
 40 ms / 1.5%. Shrinking the window does the work.
 
-But the completed reliable curve shows shedding **extends the safe edge by about one window step**:
+Whether shedding buys any *headroom* above the operating point is now doubtful:
 
 | window | `MOQ_Partial` BBox miss | `MOQ_SW` BBox miss |
 |---|---|---|
 | 128 kB | 1.5% | 0.9% |
-| 256 kB | **3.1%** | **11.3%** |
-| 300 kB | **4.5%** | **12.5%** |
+| 256 kB | 9.9% | 11.3% |
+| 300 kB | 4.5% | 12.5% |
+| 512 kB | 75.4% | 63.2% |
+| 1 MB | 71.0% | 77.8% |
+| 2 MB | 81.6% | 77.8% |
 
-At 256–300 kB the reliable baseline has already started missing (11–12%) while shedding holds the
-line (3–4%). So the reliable config's safe envelope tops out around 128–256 kB; shedding pushes it
-to ~300 kB. Near the operating point they agree; approaching the knee, shedding earns headroom.
+An earlier version of this section read a clear gap at 256 kB (3.1% against 11.3%) as shedding
+"extending the safe edge by one window step". With the delivery timeout enforced on a timer, the
+`MOQ_Partial` point moves to 9.9% and that gap closes to within single-seed noise. Only 300 kB
+still shows a wide separation (4.5% against 12.5%), and §6 shows that same point is 10.4 ± 5.1%
+across five seeds — so it is not evidence either.
+
+**The honest reading: at and below the operating point the two are indistinguishable, and above it
+the single-seed data is too noisy to separate them.** Past the knee neither is usable and the
+ordering flips between windows (512 kB favours reliable, 1 MB favours shedding), which is itself a
+sign that these differences are noise. Shedding's demonstrated contribution is bounded bulk
+staleness and bounded sender memory (§4), not extra safety-track headroom.
 
 ## 4. What partial reliability actually buys — and what it costs
 
@@ -273,9 +286,9 @@ Single seed per window point. The knee runs (350/400/450 kB) fill the transition
 version flagged as unmeasured, and they are monotonic and consistent — but the *exact* knee position
 (300 vs 350 kB) and the residual non-monotonicity at 512 kB–2 MB (stochastic channel: log-normal
 shadowing, Jakes fading, mid-run handover) still need repetitions with different seeds before any
-fine claim about the transition goes in the thesis. The reliable curve is complete for
-64–300 kB + 1 MB; its 512 kB and 2 MB points did not finish (no-shedding backlogs run so slowly they
-hit the wall-clock limit — itself a finding about unbounded reliable buffering).
+fine claim about the transition goes in the thesis. The reliable curve is now complete at all seven
+window points: the 512 kB and 2 MB runs, which previously hit the wall-clock limit before finishing,
+both completed on the current code.
 
 ---
 

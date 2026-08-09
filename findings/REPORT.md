@@ -263,17 +263,17 @@ of them, and the run is repeated under QUIC's default **round-robin** scheduler 
 
 | publishers | round-robin BBox lat / miss | priority BBox lat / miss |
 |---|---|---|
-| 1 | 47 ± 2 ms / 0.8% | 47 ± 2 ms / 0.8% |
-| 2 | 129 ± 10 ms / 48% | 83 ± 32 ms / 33% |
-| 3 | 347 ± 37 ms / 83% | 118 ± 10 ms / 51% |
-| 4 | 538 ± 147 ms / 87% | 178 ± 74 ms / 55% |
+| 1 | 48 ± 5 ms / 1.6% | 49 ± 7 ms / 1.9% |
+| 2 | 133 ± 15 ms / 49% | 92 ± 45 ms / 33% |
+| 3 | 353 ± 37 ms / 83% | 121 ± 10 ms / 52% |
+| 4 | 538 ± 147 ms / 87% | 180 ± 80 ms / 55% |
 
 1. **The safety track degrades super-linearly with publisher count.** Going 1→4 publishers (4×
-   offered safety load) drives round-robin BBox latency 47→538 ms (~11×) and miss 0.8→87%. Each new
+   offered safety load) drives round-robin BBox latency 48→538 ms (~11×) and miss 1.6→87%. Each new
    publisher adds two streams; the 50 B BBox waits behind more 37.5 KB PCloud per round, and because
    the connection is throughput-capped the backlogs compound rather than merely add.
 2. **The PriorityScheduler does real work** — it roughly halves both latency and miss at every N ≥ 2
-   (at 4 publishers, 178 vs 538 ms and 55% vs 87%). At N = 1 the two schedulers are identical,
+   (at 4 publishers, 180 vs 538 ms and 55% vs 87%). At N = 1 the two schedulers are identical,
    because a shallow 128 kB queue already delivers BBox on time regardless of order — consistent with
    the operating-envelope finding that at the BDP the *window*, not the scheduler, does the work.
 3. **But priority does not restore single-publisher performance.** Even with it, four publishers
