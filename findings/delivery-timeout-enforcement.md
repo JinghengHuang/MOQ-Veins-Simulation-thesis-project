@@ -153,3 +153,22 @@ the app buffer does not bound end-to-end latency.
   [§19.4 RESET_STREAM](https://www.rfc-editor.org/rfc/rfc9000.html#section-19.4)
 - Related in-repo: `moq-operating-envelope.md` §7, `moq-partial-reliability.md` §5,
   `ISSUES-AND-LIMITS.md` A2.4 and A2.8
+
+---
+
+## Glossary
+
+| | |
+|---|---|
+| **BBox** / **PCloud** | the 50 B / 100 ms safety track and the 37.5 kB x 8 / 500 ms bulk track |
+| **DELIVERY_TIMEOUT** | per-track deadline past which an undelivered object is abandoned (draft-14 §9.2.1.2, §10.4.3) |
+| **`sweepSendBufferTimeouts()`** | the timer-driven sweep added here; walks every priority queue and drops objects past their own timeout |
+| **transmit opportunity** | the old enforcement point — inside `flushSendBuffer`, which exits as soon as QUIC reports backpressure, so shedding stopped under exactly the congestion it exists to handle |
+| **send-buffer occupancy** | objects held in the publisher's priority-ordered app buffer; the quantity the fix bounds |
+| **B_ss = Σ λᵢTᵢ** | steady-state occupancy for an age-based discard — arrival rate × timeout, summed over tracks; 42 objects here |
+| **`MOQ_Partial_BDP`** | bounded 128 kB window **plus** delivery-timeout shedding |
+| **`MOQ_SW_BDP`** | bounded 128 kB window, **reliable** baseline (no shedding) |
+| **TOO_FAR_BEHIND** | PUBLISH_DONE status 0x6 — publisher ends a subscription at its resource limit (draft-14 §9.12) |
+| **CI** | Confidence Interval — 95%, n = 5 seeds |
+
+Full list: [`GLOSSARY.md`](GLOSSARY.md)
