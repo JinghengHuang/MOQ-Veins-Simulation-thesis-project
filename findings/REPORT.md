@@ -75,10 +75,10 @@ Two design lessons, each measured rather than assumed:
 |---|---|---|
 | **MoQ partial, 128 kB** | **33 ± 3 ms** / **0.2 ± 0.4%** / 4.1 kbps | **113 ± 50 ms** / 20.5 ± 4.7% / 2.9 kbps |
 | MoQ reliable, 128 kB | 39 ± 8 ms / 0.8 ± 1.5% / 4.1 kbps | 210 ± 95 ms / 26.7 ± 5.6% / 4.0 kbps *(ends at 63 s)* |
-| MoQ / QUIC (default) | 1246 ± 228 ms / 79.9 ± 2.5% / 3.8 kbps | 1633 ± 1142 ms / 93.4 ± 2.3% / 3.9 kbps *(ends at 68 s)* |
-| MQTT / QUIC | 2918 ± 127 ms / 90.0 ± 0.9% / 3.2 kbps | 8297 ± 812 ms / 97.3 ± 0.7% / 1.3 kbps |
-| MoQ / UDP | 1421 ± 371 ms / 93.2 ± 1.1% / 3.1 kbps | 3519 ± 846 ms / 99.0 ± 0.2% / 1.5 kbps |
-| MoQ / TCP | 4365 ± 857 ms / 91.3 ± 1.8% / 3.0 kbps | 8662 ± 1163 ms / 98.5 ± 0.5% / 1.2 kbps |
+| MoQ / QUIC (default) | 1187 ± 311 ms / 79.8 ± 2.3% / 3.8 kbps | 1633 ± 1142 ms / 93.4 ± 2.3% / 3.9 kbps *(ends at 68 s)* |
+| MQTT / QUIC | 2918 ± 127 ms / 90.0 ± 0.9% / 3.2 kbps | 8406 ± 1052 ms / 97.0 ± 1.0% / 1.2 kbps |
+| MoQ / UDP | 1421 ± 371 ms / 93.2 ± 1.1% / 3.1 kbps | 3531 ± 1706 ms / 99.1 ± 0.3% / 1.5 kbps *(n = 4)* |
+| MoQ / TCP | 4365 ± 857 ms / 91.3 ± 1.8% / 3.0 kbps | 8507 ± 1428 ms / 98.4 ± 0.6% / 1.3 kbps |
 | MQTT / TCP | 3964 ± 793 ms / 94.8 ± 0.6% / 3.1 kbps | 8557 ± 979 ms / 98.1 ± 1.9% / 1.2 kbps *(n = 4)* |
 
 *Rows marked "ends at N s" reach their send-buffer limit and terminate the subscription with
@@ -91,42 +91,42 @@ truncated offered count. See `moq-operating-envelope.md` §7.*
 
 | config | **URBAN** latency / miss / goodput | **HIGHWAY** latency / miss / goodput |
 |---|---|---|
-| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.21 ± 0.21 Mbps | 1021 ± 61 ms / 99.3% / 2.19 ± 0.74 Mbps |
+| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.16 ± 0.21 Mbps | 1021 ± 61 ms / 99.3% / 2.19 ± 0.74 Mbps |
 | MoQ reliable, 128 kB | **13 804 ± 1331 ms** / 99.7% / 5.65 Mbps | **9275 ± 1825 ms** / 99.1% / 4.04 Mbps *(ends at 63 s)* |
-| MoQ / QUIC (default) | 3291 ± 247 ms / 72.7% / **9.44 ± 0.16 Mbps** | 9106 ± 1278 ms / 90.0% / 3.11 Mbps *(ends at 68 s)* |
-| MQTT / QUIC | 2878 ± 131 ms / 65.8% / **9.66 ± 0.27 Mbps** | 8265 ± 829 ms / 88.1% / 3.45 Mbps |
-| MoQ / UDP | 1208 ± 508 ms / 55.1% / 7.88 Mbps | 2125 ± 224 ms / 83.6% / 2.55 Mbps |
-| MoQ / TCP | 4330 ± 835 ms / 65.9 ± 10.4% / 8.84 ± 0.68 Mbps | 8502 ± 1227 ms / 89.3 ± 1.6% / 3.06 Mbps |
+| MoQ / QUIC (default) | 3160 ± 106 ms / 73.8% / **9.54 ± 0.30 Mbps** | 9106 ± 1278 ms / 90.0% / 3.11 Mbps *(ends at 68 s)* |
+| MQTT / QUIC | 2878 ± 131 ms / 65.8% / **9.66 ± 0.27 Mbps** | 8338 ± 1139 ms / 88.1% / 3.40 Mbps |
+| MoQ / UDP | 1208 ± 508 ms / 55.1% / 7.88 Mbps | 2251 ± 300 ms / 85.1% / 2.55 Mbps *(n = 4)* |
+| MoQ / TCP | 4330 ± 835 ms / 65.9 ± 10.4% / 8.84 ± 0.68 Mbps | 8462 ± 1393 ms / 89.0 ± 1.6% / 3.11 Mbps |
 | MQTT / TCP | 3938 ± 778 ms / 61.0 ± 5.8% / 9.09 ± 0.35 Mbps | 8550 ± 925 ms / 87.1 ± 7.0% / 2.72 Mbps *(n = 4)* |
 
 ### What the numbers say
 
 **Latency: MoQ wins, decisively, in both scenarios.** On the safety track it is **88× faster than
 MQTT/QUIC** and **120–132× faster than the TCP variants** (urban); on the highway the corresponding
-factors are **73×** and **76–77×**. The CIs are far apart; this is not marginal.
+factors are **74×** and **75–76×**. The CIs are far apart; this is not marginal.
 
 **Throughput: MoQ does *not* beat MQTT.** On bulk goodput at a default window, MoQ/QUIC achieves
-9.44 ± 0.16 Mbps against MQTT/QUIC's 9.66 ± 0.27 Mbps — MQTT is, if anything, marginally higher,
-and on the highway they are indistinguishable (3.36 vs 3.45 Mbps). Worse, the bounded window that
-buys the deadline **halves bulk goodput** (9.44 → 4.21 Mbps). **MoQ trades throughput for
-timeliness; it does not provide both.**
+9.54 ± 0.30 Mbps against MQTT/QUIC's 9.66 ± 0.27 Mbps — the CIs overlap, so the two are
+indistinguishable, and on the highway MQTT is nominally ahead (3.40 vs 3.11 Mbps, also
+overlapping). Worse, the bounded window that buys the deadline **more than halves bulk goodput**
+(9.54 → 4.16 Mbps). **MoQ trades throughput for timeliness; it does not provide both.**
 
 **The gap decomposes into three layers**, all mechanism-attributable:
 - **TCP loses on latency, not on throughput** (4.4 s urban / 8.6 s highway; 91–95% and 98% miss).
   A single ordered byte stream means a 37.5 KB PCloud segment head-of-line-blocks a 50 B BBox
   message, and no application protocol can fix that from above. **The signature is direct: TCP
-  delivers BBox at essentially its own PCloud's latency — 4365 vs 4330 ms urban, 8662 vs 8502 ms
+  delivers BBox at essentially its own PCloud's latency — 4365 vs 4330 ms urban, 8507 vs 8462 ms
   highway — because the safety track moves at the bulk track's pace when they share one ordered
-  stream. QUIC decouples them (urban 1246 vs 3291 ms; highway 1633 vs 9106 ms). Meanwhile bulk
-  throughput is at near-parity (urban PCloud 8.84 Mbps over TCP against 9.44 Mbps over QUIC), so
+  stream. QUIC decouples them (urban 1187 vs 3160 ms; highway 1633 vs 9106 ms). Meanwhile bulk
+  throughput is at near-parity (urban PCloud 8.84 Mbps over TCP against 9.54 Mbps over QUIC), so
   this is not a capacity deficit — the ordered stream costs latency specifically.** This is HOL
   blocking measured rather than inferred, and it is what remains after the advertised-window
   artifact was fixed; the earlier "22–26 s, 100% miss, ~12% delivered" figures were that artifact,
   not TCP.
-- **QUIC alone buys less than expected** — 3.5× for MoQ and only 1.4× for MQTT (urban); on the
-  highway 5.3× for MoQ and essentially nothing for MQTT (8557 → 8297 ms). Removing cross-stream
+- **QUIC alone buys less than expected** — 3.7× for MoQ and only 1.4× for MQTT (urban); on the
+  highway 5.2× for MoQ and essentially nothing for MQTT (8557 → 8406 ms). Removing cross-stream
   HOL blocking helps only a protocol that uses multiple streams, and MQTT does not.
-- **The bounded window buys the remaining ~38×** (1246 → 33 ms, urban), and is where the deadline
+- **The bounded window buys the remaining ~36×** (1187 → 33 ms, urban), and is where the deadline
   is actually won.
 
 **Why plain UDP also trails QUIC** (the comparison the three layers above omit). The clean

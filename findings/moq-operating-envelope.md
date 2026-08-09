@@ -46,7 +46,7 @@ The sweep is **not** a smooth trade — it has two regimes divided by a knee:
   climbs 3.7 -> 7.0 Mbps and its delivered fraction 19% -> 37% — at little cost to the safety track
   *in this single-seed sweep*. (The multi-seed validation in §6 is less forgiving: near the knee the
   run-to-run variance is large, so the *upper* end of this zone is not actually safe — 300 kB across
-  5 seeds misses 9.5%, not 4.5%. The genuinely safe operating point is 128 kB, not 300 kB.)
+  5 seeds misses 10.4%, not 4.5%. The genuinely safe operating point is 128 kB, not 300 kB.)
 - **The knee (~300–350 kB).** BBox deadline-miss jumps 4.5% -> 23% between 300 and 350 kB; mean
   latency crosses 100 ms between 350 and 400 kB. The safety track breaks here. Note the *miss ratio*
   turns before the *mean* does (350 kB is 88 ms mean but 23% miss — the tail is already blown), so
@@ -178,12 +178,12 @@ refutes that** — the single-seed 300 kB point was an optimistic draw:
 | operating point | urban BBox miss (5-seed) | urban BBox latency | urban PCloud goodput |
 |---|---|---|---|
 | **128 kB (canonical)** | **0.2 ± 0.4%** | 33 ± 3 ms | 4.2 Mbps |
-| 300 kB (tested) | **9.5 ± 4.6%** | 90 ± 82 ms | 6.9 Mbps |
+| 300 kB (tested) | **10.4 ± 5.1%** | 92 ± 81 ms | 6.9 Mbps |
 
-Across seeds, 300 kB misses the safety deadline ~9.5% of the time with an enormous latency CI
-(±82 ms, straddling the 100 ms line) — because 300 kB sits one step below the ~350 kB knee, and radio
+Across seeds, 300 kB misses the safety deadline ~10% of the time with an enormous latency CI
+(±81 ms, straddling the 100 ms line) — because 300 kB sits one step below the ~350 kB knee, and radio
 fading tips individual seeds over it. 128 kB, well below the knee, is stable (0.2 ± 0.4%). The same
-holds on the highway (128 kB: 19% miss; 300 kB: 36%).
+holds on the highway (128 kB: 20.5% miss; 300 kB: 38.0%).
 
 So the choice is **not** a free safety-vs-throughput trade among equals. **300 kB buys ~2.7 Mbps of
 bulk goodput at the cost of a safety track that misses ~1 in 10 deadlines with wild variance — not
@@ -192,7 +192,7 @@ from the knee, and the only tested window that holds the deadline with a tight C
 is safer still, 0.0%, but starves the bulk track at 3.7 Mbps; 128 kB is the balance.)
 
 This is also a clean methodology lesson (A3.3 in ISSUES-AND-LIMITS): the single-seed sweep's 4.5%
-became 9.5 ± 4.6% across five seeds — fine claims about the near-knee region cannot rest on one run.
+became 10.4 ± 5.1% across five seeds — fine claims about the near-knee region cannot rest on one run.
 See the "operating point: 128 kB vs 300 kB" chart (both 5-seed).
 
 ## 7. What a track with NO delivery timeout does at the resource limit
@@ -238,7 +238,7 @@ in the urban grid and cannot sustain it on the highway.
 **Do not compare `delivered%` across configs with different survival times.** It is
 `objectsReceived / objectsOffered`, and a config that terminates stops offering — so the denominator
 truncates and the ratio *flatters* the config that gave up. `MOQ_QUIC` reports 67.5% delivered
-against `MOQ_Partial_BDP`'s 35.2%, while having produced 66.4 s of content against 88.0 s. Use the
+against `MOQ_Partial_BDP`'s 35.3%, while having produced 66.4 s of content against 88.0 s. Use the
 absolute counts above, or normalise by road time.
 
 **Read the survival time with its buffer size attached.** It is roughly

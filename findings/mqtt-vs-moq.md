@@ -36,24 +36,24 @@ single fragment, so only PCloud is affected.
 
 | config | **URBAN** latency / miss / delivered | **HIGHWAY** latency / miss / delivered |
 |---|---|---|
-| **MoQ partial, 128 kB** | **33 ± 3 ms** / **0.2 ± 0.4%** / 62.2 ± 0.1% | **102 ± 42 ms** / 19.2 ± 2.4% / 35.2 ± 7.4% |
+| **MoQ partial, 128 kB** | **33 ± 3 ms** / **0.2 ± 0.4%** / 62.2 ± 0.0% | **113 ± 50 ms** / 20.5 ± 4.7% / 35.3 ± 8.4% |
 | MoQ reliable, 128 kB | 39 ± 8 ms / 0.8 ± 1.5% / 58.6 ± 7.8% | 210 ± 95 ms / 26.7 ± 5.6% / 39.1 ± 9.0% |
 | MoQ / QUIC (default) | 1187 ± 311 ms / 79.8 ± 2.3% / 61.9 ± 0.5% | 1633 ± 1142 ms / 93.4 ± 2.3% / 67.5 ± 5.8% |
 | MQTT / QUIC | 2918 ± 127 ms / 90.0 ± 0.9% / 51.6 ± 0.4% | 8406 ± 1052 ms / 97.0 ± 1.0% / 15.6 ± 1.4% |
 | MoQ / UDP | 1421 ± 371 ms / 93.2 ± 1.1% / 50.7 ± 1.1% | 3531 ± 1706 ms / 99.1 ± 0.3% / 24.4 ± 7.8% *(n = 4)* |
-| MoQ / TCP | 4365 ± 857 ms / 91.3 ± 1.8% / 55.1 ± 3.7% | 8662 ± 1163 ms / 98.5 ± 0.5% / 12.9 ± 1.9% |
+| MoQ / TCP | 4365 ± 857 ms / 91.3 ± 1.8% / 55.1 ± 3.7% | 8507 ± 1428 ms / 98.4 ± 0.6% / 12.9 ± 2.2% |
 | MQTT / TCP | 3964 ± 793 ms / 94.8 ± 0.6% / 49.4 ± 2.8% | 8557 ± 979 ms / 98.1 ± 1.9% / 12.9 ± 0.9% *(n = 4)* |
 
 ### PCloud (bulk, 500 ms deadline)
 
 | config | **URBAN** latency / miss / goodput | **HIGHWAY** latency / miss / goodput |
 |---|---|---|
-| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.21 ± 0.21 Mbps | 1045 ± 111 ms / 99.3% / 2.13 ± 0.62 Mbps |
+| MoQ partial, 128 kB | 951 ± 4 ms / 99.6% / 4.16 ± 0.21 Mbps | 1021 ± 61 ms / 99.3% / 2.19 ± 0.74 Mbps |
 | MoQ reliable, 128 kB | **13 804 ± 1331 ms** / 99.7% / 5.65 Mbps | **9275 ± 1825 ms** / 99.1% / 4.04 Mbps |
 | MoQ / QUIC (default) | 3160 ± 106 ms / 73.8 ± 4.0% / **9.54 ± 0.30 Mbps** | 9106 ± 1278 ms / 90.0 ± 2.9% / 3.11 Mbps |
 | MQTT / QUIC | 2878 ± 131 ms / 65.8 ± 4.9% / **9.66 ± 0.27 Mbps** | 8338 ± 1139 ms / 88.1 ± 2.2% / 3.40 Mbps |
 | MoQ / UDP | 1208 ± 508 ms / 55.1 ± 7.5% / 7.88 Mbps | 2251 ± 300 ms / 85.1 ± 3.9% / 2.55 Mbps *(n = 4)* |
-| MoQ / TCP | 4330 ± 835 ms / 65.9 ± 10.4% / 8.84 ± 0.68 Mbps | 8502 ± 1227 ms / 89.3 ± 1.6% / 3.06 Mbps |
+| MoQ / TCP | 4330 ± 835 ms / 65.9 ± 10.4% / 8.84 ± 0.68 Mbps | 8462 ± 1393 ms / 89.0 ± 1.6% / 3.11 Mbps |
 | MQTT / TCP | 3938 ± 778 ms / 61.0 ± 5.8% / 9.09 ± 0.35 Mbps | 8550 ± 925 ms / 87.1 ± 7.0% / 2.72 Mbps *(n = 4)* |
 
 *`n = 4` marks rows where one seed was excluded by the Simu5G handover crash (see
@@ -64,7 +64,7 @@ single fragment, so only PCloud is affected.
 **Only MoQ over QUIC with a bounded transport buffer meets the safety deadline** (0.2 ± 0.4% miss at
 33 ± 3 ms, urban). Every other protocol in the matrix — MQTT over either transport, MoQ over TCP or
 UDP, and MoQ over QUIC at its default window — misses 80–95% of BBox deadlines. On the highway
-**nothing** meets it, MoQ included (102 ± 42 ms, 19.2% miss); the ordering holds, the absolute
+**nothing** meets it, MoQ included (113 ± 50 ms, 20.5% miss); the ordering holds, the absolute
 claim does not.
 
 But the credit does not go where we first assumed. The window sweep
@@ -84,10 +84,10 @@ So the correct claim is narrower and more precise:
 
 The gap decomposes into three layers:
 
-- **TCP costs latency, not throughput.** 4365 ms urban / 8662 ms highway, 91–98% miss. One ordered
+- **TCP costs latency, not throughput.** 4365 ms urban / 8507 ms highway, 91–98% miss. One ordered
   byte stream means a 37.5 KB PCloud segment head-of-line-blocks a 50 B BBox message, and neither
   MoQ nor MQTT can do anything about it from above. The signature is that **TCP delivers BBox at
-  essentially its own PCloud's latency** (4365 vs 4330 ms urban; 8662 vs 8502 ms highway) while
+  essentially its own PCloud's latency** (4365 vs 4330 ms urban; 8507 vs 8462 ms highway) while
   QUIC decouples the two (1187 vs 3160 ms urban). Bulk goodput, by contrast, is at near-parity
   with QUIC (8.84 vs 9.54 Mbps urban) — so the ordered stream is not costing capacity.
 - **QUIC alone buys far less than the stream abstraction suggests** — 3.7× for MoQ but only 1.4×
