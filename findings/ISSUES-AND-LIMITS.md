@@ -119,13 +119,17 @@ With a deep transport buffer an object leaves the app buffer long before it ages
 - **Fixed:** `a43d4a4` (periodic sweep over written-but-outstanding objects, resetting their stream).
 
 ### A2.5 Subgroup size amplified loss on the protected track
-A `RESET_STREAM` abandons *the stream*, i.e. the whole subgroup. With `objectsPerGroup = 10`, ten
-BBox objects shared one stream, so one stale object destroyed nine others.
+A `RESET_STREAM` abandons *the stream*, i.e. the whole subgroup. An early configuration batched ten
+BBox objects into one subgroup, so one stale object destroyed the nine sharing its stream.
 
-- **Effect:** **291 of 411** BBox objects lost as collateral of 40 resets — the mechanism was
-  destroying the very track it was meant to protect.
-- **Lesson (design finding):** a track you intend to protect must not share a subgroup with objects
-  you are willing to abandon.
+- **Effect:** the mechanism destroyed the very track it was meant to protect. The measurements that
+  characterised it were taken under a configuration this project no longer uses and have been
+  retracted (they were also inconsistent between documents); they are not reproducible from the
+  repository and no claim rests on them.
+- **Fixed by design, not by tuning:** `objectsPerGroup = 1` for BBox, so every safety object owns
+  its stream. Streams exist precisely so that tracks can be scheduled and abandoned independently —
+  sharing a subgroup between a protected track and an abandonable one defeats the purpose of having
+  a priority at all.
 - **Fixed:** `5d23916`.
 
 ### A2.6 Metrics that could not see the loss they were measuring
