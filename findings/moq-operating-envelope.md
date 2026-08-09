@@ -107,18 +107,27 @@ to ~1 s — a **~14x** reduction. Both miss PCloud's 500 ms deadline ~99% of the
 *useful* for the bulk track at these windows, but 1 s of bounded staleness is a different failure
 mode from acting on 14-second-old perception.
 
-**It costs most of the bulk track.** Shedding delivers *less* PCloud than the reliable baseline:
+**It costs about a fifth of bulk delivery.** Shedding delivers less PCloud than the reliable
+baseline, but far less than an earlier version of this document claimed. From the 5-seed urban
+runs at each operating point (mean ± 95% CI):
 
-| window | `MOQ_Partial` PCloud delivered | `MOQ_SW` PCloud delivered |
-|---|---|---|
-| 128 kB | **22.6%** | 59.7% |
-| 300 kB | 37.4% | 60.7% |
+| window | `MOQ_Partial` PCloud delivered | `MOQ_SW` PCloud delivered | relative cost |
+|---|---|---|---|
+| 128 kB | **21.4 ± 1.0%** | 27.2 ± 2.7% | −21% |
+| 300 kB | 35.3 ± 3.6% | 42.6 ± 1.4% | −17% |
 
-At the 128 kB operating point partial reliability delivers only ~23% of PCloud — **it sheds roughly
-three-quarters of the bulk track** (see §5 on where those objects go). The reliable baseline delivers
-~60%, but 14 s late. This is the trade in one line: **`MOQ_Partial` sacrifices bulk *quantity* for
-bulk *freshness*, and both for safety-track latency.** Right for collision warning; wrong for HD-map
-upload.
+So the trade is **~1 s of staleness instead of ~14 s, for about a fifth of the bulk objects** —
+not the near-total sacrifice previously reported. Stated in one line: **`MOQ_Partial` gives up a
+modest share of bulk *quantity* to bound bulk *staleness*, and bounds the sender's memory as a
+side effect** (see [`delivery-timeout-enforcement.md`](delivery-timeout-enforcement.md)). That is
+a considerably better bargain for collision warning than the earlier framing suggested, and it is
+still the wrong one for HD-map upload, where the missing fifth is the whole point of the transfer.
+
+> **Correction.** This section previously reported `MOQ_SW` delivering 59.7% and 60.7% of PCloud
+> at 128 kB and 300 kB, against `MOQ_Partial`'s 22.6% and 37.4% — implying shedding cost roughly
+> two-thirds of the bulk track. The `MOQ_SW` figures were wrong by about 2×; the single-seed
+> sweep, the 5-seed `_BDP` runs and the 5-seed `_BDP_300` runs all agree on ~28% and ~43%. The
+> direction of the effect is unchanged; its magnitude was overstated.
 
 ## 5. Where shed PCloud goes
 
@@ -141,11 +150,24 @@ this case directly (§9.2.1.2): at its resource limit the publisher **MAY termin
 with TOO_FAR_BEHIND**, which is what the model now does. See §7.
 
 At the tight operating window most PCloud takes path 1 and is dropped in the app buffer before it is
-ever sent, because QUIC is backpressured and the buffer fills faster than it drains. So yes — **at
-128 kB the majority of PCloud is never sent** (~77% shed). That is by design: partial reliability
-protects the safety track by sacrificing the bulk track. The point-cloud segmentation into 8
-independently-usable 37.5 KB segments is what makes this tolerable — the ~23% that *is* delivered is
-still a usable (sparser) point cloud, not a corrupt blob.
+ever sent, because QUIC is backpressured and the buffer fills faster than it drains. Measured at the
+128 kB operating point over 5 seeds, of the PCloud objects the publisher generates:
+
+| | never sent | of which, shed on timeout |
+|---|---|---|
+| urban | **58.5 ± 1.7%** | 56.3 ± 1.7% |
+| highway | **88.4 ± 1.5%** | 87.2 ± 1.5% |
+
+So a majority of PCloud never reaches the wire, and on the highway the great majority does not.
+That is by design: partial reliability protects the safety track by sacrificing the bulk track, and
+it sacrifices more of it exactly where the link is worse.
+
+Two things this figure is *not*. It is not the same as the delivered fraction (21.4% urban) — the
+remaining gap is the late-join delivery ceiling and downstream loss, not publisher shedding. And it
+is not directly comparable to `MOQ_SW`, which sheds nothing at the publisher and instead converts
+the same excess into ~14 s of queueing delay. The point-cloud segmentation into 8 independently
+usable 37.5 KB segments is what makes any of this tolerable: what is delivered is a sparser point
+cloud, not a corrupt blob.
 
 ## 6. The 128 kB choice, validated against 300 kB
 
