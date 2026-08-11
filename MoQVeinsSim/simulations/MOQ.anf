@@ -8,6 +8,8 @@
         <input pattern="results/sweep/*.sca"/>
         <input pattern="results/pubscale/**/*.sca"/>
         <input pattern="results/bdp300/**/*.sca"/>
+        <input pattern="results/sweep_prio/*.sca"/>
+        <input pattern="results/prio_oppoint/**/*.sca"/>
     </inputs>
     <charts>
         <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000001" name="RQ2_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
@@ -1897,6 +1899,142 @@ utils.export_image_if_needed(props)
 utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Per-subscriber goodput: every protocol on every subscriber"/>
+        </chart>
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000020" name="RQ1_priority_vs_window" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+            <script><![CDATA[from omnetpp.scave import results, chart, utils
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# Does QUIC-level priority scheduling substitute for a bounded flow-control window?
+# A reader reaching the conclusion asks this: the headline runs use round-robin, so
+# perhaps the 2 MB bufferbloat result is a scheduling artefact rather than a queueing one.
+# It is not. Both arms sweep the same 10 windows with the same seed at each window
+# (-r sets the seed set), so the pairwise difference isolates the scheduler.
+#
+# Data: results/sweep (MOQ_Partial_Window, round-robin) vs results/sweep_prio
+# (MOQ_Partial_Prio_Window, streamScheduler="Priority"), plus 5-seed points at the two
+# operating points from results/prio_oppoint and results/urban.
+
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
+def ci95(x):
+    x = x.dropna()
+    return 0.0 if len(x) < 2 else T95.get(len(x) - 1, 1.96) * x.std(ddof=1) / np.sqrt(len(x))
+
+def to_bytes(w):
+    w = str(w).strip()
+    if w.endswith("MB"): return float(w[:-2]) * 1e6
+    if w.endswith("kB"): return float(w[:-2]) * 1e3
+    return float(w)
+
+def load(cfg, metric):
+    """Per-window mean over subscriber cars, deduplicated by (window, seed set).
+
+    sweep_prio and prio_oppoint share a config name and overlap on one run
+    (2 MB / seed 0 and 128 kB / seed 4 appear in both), so collapsing on
+    (window, seedset) keeps each seed counted exactly once."""
+    df = results.get_scalars(
+        f'name =~ "*BBox*{metric}*" AND runattr:configname =~ "{cfg}"',
+        include_itervars=True, include_runattrs=True)
+    if df.empty:
+        return pd.DataFrame(columns=["window", "mean", "ci", "n"])
+    df = df[df["value"].notna()]
+    df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]   # subscribers only
+    df["window"] = df["win"].map(to_bytes) / 1e3
+    key = "seedset" if "seedset" in df.columns else "runID"
+    per_seed = df.groupby(["window", key])["value"].mean().reset_index()
+    agg = per_seed.groupby("window")["value"].agg(["mean", ci95, "count"]).reset_index()
+    agg.columns = ["window", "mean", "ci", "n"]
+    return agg.sort_values("window")
+
+def load_bdp(metric):
+    """Round-robin 5-seed reference at the 128 kB operating point (MOQ_Partial_BDP)."""
+    df = results.get_scalars(f'name =~ "*BBox*{metric}*" AND runattr:configname =~ "MOQ_Partial_BDP"',
+                             include_runattrs=True)
+    if df.empty:
+        return None
+    df = df[df["value"].notna()]
+    df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]
+    per_run = df.groupby("runID")["value"].mean()
+    return per_run.mean(), ci95(per_run), len(per_run)
+
+RR, PRIO = "#2b6cb0", "#c05621"       # validated pair: CVD dE 20.9 (protan), normal 27.3
+OPPOINT, DEADLINE = "#2f855a", "#c53030"
+WINDOWS = [64, 128, 256, 300, 350, 400, 450, 512, 1000, 2000]
+
+props = chart.get_properties()
+utils.preconfigure_plot(props)
+fig = plt.gcf(); fig.clear()
+fig.set_layout_engine("compressed"); fig.set_size_inches(12, 5)
+axes = fig.subplots(1, 2, squeeze=False)[0]
+
+PANELS = [(0, "meanLatency", 1000, "BBox mean latency (ms)", True, 100),
+          (1, "deadlineMissRatio", 100, "BBox deadline miss (%)", False, None)]
+
+export = []
+for idx, metric, scale, ylabel, logy, deadline in PANELS:
+    ax = axes[idx]
+    for cfg, label, colour, style, marker in [
+            ("MOQ_Partial_Window",      "Round-robin (default)", RR,   "-",  "o"),
+            ("MOQ_Partial_Prio_Window", "Priority scheduler",    PRIO, "--", "s")]:
+        d = load(cfg, metric)
+        if d.empty:
+            continue
+        a = d.copy(); a["scheduler"] = label; a["metric"] = metric; export.append(a)
+        # Identity is carried by colour AND dash pattern AND marker, never colour alone.
+        ax.plot(d["window"], d["mean"] * scale, style, marker=marker, markersize=8,
+                linewidth=2, color=colour, label=label, zorder=3)
+        # Multi-seed points get error bars; single-seed points must not imply a CI.
+        m = d[d["n"] > 1]
+        if not m.empty:
+            ax.errorbar(m["window"], m["mean"] * scale, yerr=m["ci"] * scale, fmt="none",
+                        ecolor=colour, elinewidth=2, capsize=5, zorder=4)
+            ax.scatter(m["window"], m["mean"] * scale, s=110, facecolors="white",
+                       edgecolors=colour, linewidths=2, zorder=5)
+    ref = load_bdp(metric)
+    if ref is not None:
+        mu, hw, n = ref
+        ax.errorbar([128], [mu * scale], yerr=[hw * scale], fmt="none",
+                    ecolor=RR, elinewidth=2, capsize=5, zorder=4)
+        ax.scatter([128], [mu * scale], s=110, facecolors="white", edgecolors=RR,
+                   linewidths=2, zorder=5)
+
+    ax.axvline(128, color=OPPOINT, linewidth=1.3, zorder=1)
+    if deadline is not None:
+        ax.axhline(deadline, color=DEADLINE, linestyle="--", linewidth=1.2, zorder=1)
+        ax.text(1900, deadline * 1.15, "100 ms deadline", ha="right", va="bottom",
+                fontsize=8, color=DEADLINE)
+    ax.set_xscale("log")
+    if logy:
+        ax.set_yscale("log")
+    else:
+        ax.set_ylim(-3, 103)
+    ax.set_xticks(WINDOWS)
+    ax.set_xticklabels([str(w) for w in WINDOWS], fontsize=7, rotation=45)
+    ax.minorticks_off()
+    ax.set_xlim(55, 2600)
+    ax.set_xlabel("QUIC flow-control window (kB)  [log]", fontsize=9)
+    ax.set_ylabel(ylabel, fontsize=9)
+    ax.grid(alpha=0.3, which="major")
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+
+axes[0].legend(loc="upper left", fontsize=9, framealpha=0.9)
+fig.suptitle("Priority scheduling does not substitute for a bounded window\n"
+             "Both arms track each other: at 2 MB the backlog already sits below QUIC, "
+             "where the scheduler cannot reorder it", fontsize=12)
+fig.text(0.5, 0.005,
+         "Hollow markers with error bars are 5-seed means (95% CI) at the two operating points; "
+         "all other points are a single seed, and each window uses a different seed. "
+         "Green line = 128 kB operating point.",
+         ha="center", fontsize=8, style="italic", color="#4a5568")
+
+combined = pd.concat(export, ignore_index=True) if export else pd.DataFrame()
+utils.postconfigure_plot(props)
+utils.export_image_if_needed(props)
+utils.export_data_if_needed(combined, props)
+]]></script>
+            <property name="Graph.Title" value="Priority scheduling vs bounded window (urban)"/>
         </chart>
     </charts>
 </analysis>
