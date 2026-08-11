@@ -15,7 +15,7 @@ import inet.node.inet.AdhocHost;
 import inet.node.inet.Router;
 import inet.node.inet.StandardHost;
 import inet.node.ethernet.Eth10G;
-
+import inet.visualizer.common.IntegratedVisualizer;
 import simu5g.world.radio.LteChannelControl;
 import simu5g.common.carrierAggregation.CarrierAggregation;
 import simu5g.nodes.Upf;
@@ -35,7 +35,9 @@ network Highway
         @display("bgb=732,483");
 
     submodules:
-
+        visualizer: IntegratedVisualizer {
+            @display("p=50,290;is=s");
+        }
         routingRecorder: RoutingTableRecorder {
             @display("p=50,75;is=s");
         }
