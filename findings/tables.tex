@@ -1,0 +1,282 @@
+% =====================================================================================
+% Tables from findings/REPORT.md, in LaTeX.
+%
+% Generated from the 5-seed, single-vintage dataset in results/{urban,highway,pubscale}.
+% Every figure here is mean +/- 95% CI half-width (t-distribution, n = 5 unless noted).
+%
+% Required packages:
+%   \usepackage{booktabs}     % \toprule \midrule \bottomrule \cmidrule
+%   \usepackage{threeparttable}  % table notes tied to the table
+%   \usepackage{ragged2e}     % \RaggedRight in p-columns
+%   \usepackage{graphicx}     % \resizebox, if a table overruns \textwidth
+%
+% The wide tables assume a normal \textwidth; in a narrow layout wrap the tabular in
+%   \resizebox{\textwidth}{!}{ ... }
+% or move them to a landscape page.
+% =====================================================================================
+
+
+% -------------------------------------------------------------------------------------
+% Setup: the two scenarios
+% -------------------------------------------------------------------------------------
+\begin{table}[htbp]
+  \centering
+  \caption{The two evaluation scenarios. Workload, offered load and burst shape are
+           identical in both; only mobility, topology and propagation differ.}
+  \label{tab:scenarios}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+                        & \textbf{Urban}                          & \textbf{Highway} \\
+    \midrule
+    Road                & $3\times3$ SUMO grid, 200\,m edges, 50\,km/h
+                        & Straight 3\,km corridor, 3 lanes, 120\,km/h \\
+    Vehicles            & 8, departing 0--35\,s                   & 8, departing 0--14\,s (platoon) \\
+    gNodeBs             & (156, 136) and (391, 313)\,m            & $x = 750$\,m and $x = 2250$\,m, 100\,m off the road \\
+    Handover            & None in practice                        & Exactly one, mid-corridor \\
+    Propagation         & \texttt{URBAN\_MACROCELL}               & \texttt{RURAL\_MACROCELL} \\
+    Publisher lifetime  & ${\sim}45$\,s                           & ${\sim}90$\,s \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+% -------------------------------------------------------------------------------------
+% RQ2 -- BBox (safety-critical)
+% -------------------------------------------------------------------------------------
+\begin{table}[htbp]
+  \centering
+  \begin{threeparttable}
+    \caption{\texttt{BBox} safety track (50\,B every 100\,ms, 100\,ms deadline).
+             Mean $\pm$ 95\,\% CI over 5 seeds. Lower is better throughout.}
+    \label{tab:rq2-bbox}
+    \begin{tabular}{@{}lrrrrrr@{}}
+      \toprule
+      & \multicolumn{3}{c}{\textbf{Urban}} & \multicolumn{3}{c}{\textbf{Highway}} \\
+      \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+      Configuration
+        & Latency & Miss & Goodput & Latency & Miss & Goodput \\
+        & (ms)    & (\%) & (kbps)  & (ms)    & (\%) & (kbps)  \\
+      \midrule
+      \textbf{MoQ partial, 128\,kB}
+        & $\mathbf{33 \pm 3}$   & $\mathbf{0.2 \pm 0.4}$ & 4.1
+        & $\mathbf{113 \pm 50}$ & $20.5 \pm 4.7$         & 2.9 \\
+      MoQ reliable, 128\,kB
+        & $39 \pm 8$    & $0.8 \pm 1.5$  & 4.1
+        & $210 \pm 95$  & $26.7 \pm 5.6$ & 4.0\tnote{a} \\
+      MoQ / QUIC (default)
+        & $1187 \pm 311$  & $79.8 \pm 2.3$ & 3.8
+        & $1633 \pm 1142$ & $93.4 \pm 2.3$ & 3.9\tnote{b} \\
+      MQTT / QUIC
+        & $2918 \pm 127$  & $90.0 \pm 0.9$ & 3.2
+        & $8406 \pm 1052$ & $97.0 \pm 1.0$ & 1.2 \\
+      MoQ / UDP
+        & $1421 \pm 371$  & $93.2 \pm 1.1$ & 3.1
+        & $3531 \pm 1706$ & $99.1 \pm 0.3$ & 1.5\tnote{c} \\
+      MoQ / TCP
+        & $4365 \pm 857$  & $91.3 \pm 1.8$ & 3.0
+        & $8507 \pm 1428$ & $98.4 \pm 0.6$ & 1.3 \\
+      MQTT / TCP
+        & $3964 \pm 793$ & $94.8 \pm 0.6$ & 3.1
+        & $8557 \pm 979$ & $98.1 \pm 1.9$ & 1.2\tnote{c} \\
+      \bottomrule
+    \end{tabular}
+    \begin{tablenotes}[flushleft]\footnotesize
+      \item[a] Terminates the subscription at $63.0 \pm 2.1$\,s
+               (\textsc{publish\_done} \textsc{too\_far\_behind}) in all 5 seeds.
+      \item[b] Terminates at $68.2 \pm 1.9$\,s in all 5 seeds.
+      \item[c] $n = 4$: one seed excluded by an upstream Simu5G handover crash.
+      \item Rows marked (a)/(b) serve only ${\sim}70$--75\,\% of the ${\sim}88$\,s the highway
+            publisher is on the road, so their latency and goodput are measured over a shorter
+            window and their delivered fraction is computed against a truncated offered count.
+    \end{tablenotes}
+  \end{threeparttable}
+\end{table}
+
+
+% -------------------------------------------------------------------------------------
+% RQ2 -- PCloud (bulk)
+% -------------------------------------------------------------------------------------
+\begin{table}[htbp]
+  \centering
+  \begin{threeparttable}
+    \caption{\texttt{PCloud} bulk track (one LiDAR sweep per 200\,ms as
+             $8 \times 37.5$\,kB segments, 500\,ms deadline). Mean $\pm$ 95\,\% CI over 5 seeds.}
+    \label{tab:rq2-pcloud}
+    \begin{tabular}{@{}lrrrrrr@{}}
+      \toprule
+      & \multicolumn{3}{c}{\textbf{Urban}} & \multicolumn{3}{c}{\textbf{Highway}} \\
+      \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+      Configuration
+        & Latency & Miss & Goodput & Latency & Miss & Goodput \\
+        & (ms)    & (\%) & (Mbps)  & (ms)    & (\%) & (Mbps)  \\
+      \midrule
+      MoQ partial, 128\,kB
+        & $951 \pm 4$  & 99.6 & $4.16 \pm 0.21$
+        & $1021 \pm 61$ & 99.3 & $2.19 \pm 0.74$ \\
+      MoQ reliable, 128\,kB
+        & $\mathbf{13\,804 \pm 1331}$ & 99.7 & 5.65
+        & $\mathbf{9275 \pm 1825}$    & 99.1 & 4.04\tnote{a} \\
+      MoQ / QUIC (default)
+        & $3160 \pm 106$  & 73.8 & $\mathbf{9.54 \pm 0.30}$
+        & $9106 \pm 1278$ & 90.0 & 3.11\tnote{b} \\
+      MQTT / QUIC
+        & $2878 \pm 131$  & 65.8 & $\mathbf{9.66 \pm 0.27}$
+        & $8338 \pm 1139$ & 88.1 & 3.40 \\
+      MoQ / UDP
+        & $1208 \pm 508$ & 55.1 & 7.88
+        & $2251 \pm 300$ & 85.1 & 2.55\tnote{c} \\
+      MoQ / TCP
+        & $4330 \pm 835$  & $65.9 \pm 10.4$ & $8.84 \pm 0.68$
+        & $8462 \pm 1393$ & $89.0 \pm 1.6$  & 3.11 \\
+      MQTT / TCP
+        & $3938 \pm 778$ & $61.0 \pm 5.8$ & $9.09 \pm 0.35$
+        & $8550 \pm 925$ & $87.1 \pm 7.0$ & 2.72\tnote{c} \\
+      \bottomrule
+    \end{tabular}
+    \begin{tablenotes}[flushleft]\footnotesize
+      \item[a] Terminates at $63.0 \pm 2.1$\,s in all 5 seeds.
+      \item[b] Terminates at $68.2 \pm 1.9$\,s in all 5 seeds.
+      \item[c] $n = 4$: one seed excluded by an upstream Simu5G handover crash.
+    \end{tablenotes}
+  \end{threeparttable}
+\end{table}
+
+
+% -------------------------------------------------------------------------------------
+% UDP: isolating congestion control from reassembly
+% -------------------------------------------------------------------------------------
+\begin{table}[htbp]
+  \centering
+  \begin{threeparttable}
+    \caption{Per-track in-range loss on the highway. \texttt{BBox} is a single datagram and
+             \texttt{PCloud} is 32, so comparing the two columns separates the cost of missing
+             congestion control from the cost of all-or-nothing reassembly.}
+    \label{tab:udp-loss}
+    \begin{tabular}{@{}lrr@{}}
+      \toprule
+      Configuration & \texttt{BBox} (1 datagram) & \texttt{PCloud} (32 datagrams) \\
+      \midrule
+      MoQ / UDP  & \textbf{58.6\,\%} & 77.5\,\% \\
+      MoQ / QUIC & 12.1\,\%          & 33.7\,\% \\
+      MoQ / TCP  & 31.8\,\%          & 32.3\,\% \\
+      \bottomrule
+    \end{tabular}
+    \begin{tablenotes}[flushleft]\footnotesize
+      \item UDP loses 58.6\,\% of its \emph{single-datagram} messages, a gap that exists before
+            any object is fragmented: its deficit is the absence of congestion control, not of
+            reassembly robustness. Fragmentation adds a further ${\sim}1.8\times$ penalty
+            (survival $41.4\,\% \rightarrow 22.5\,\%$), far less than an independence model
+            would predict, because an object's datagrams are written back to back and are
+            dropped together.
+    \end{tablenotes}
+  \end{threeparttable}
+\end{table}
+
+
+% -------------------------------------------------------------------------------------
+% RQ3 (extended): publisher scaling, round-robin vs priority scheduler
+% -------------------------------------------------------------------------------------
+\begin{table}[htbp]
+  \centering
+  \begin{threeparttable}
+    \caption{\texttt{BBox} latency and deadline-miss as the publisher count scales at constant
+             total offered load, with QUIC's default round-robin stream scheduler against the
+             \texttt{PriorityScheduler}. Urban, mean $\pm$ 95\,\% CI over 5 seeds.}
+    \label{tab:pubscale}
+    \begin{tabular}{@{}crrrr@{}}
+      \toprule
+      & \multicolumn{2}{c}{Round-robin} & \multicolumn{2}{c}{Priority} \\
+      \cmidrule(lr){2-3}\cmidrule(lr){4-5}
+      Publishers & Latency (ms) & Miss (\%) & Latency (ms) & Miss (\%) \\
+      \midrule
+      1 & $48 \pm 5$    & 1.6 & $49 \pm 7$   & 1.9 \\
+      2 & $133 \pm 15$  & 49  & $92 \pm 45$  & 33 \\
+      3 & $353 \pm 37$  & 83  & $121 \pm 10$ & 52 \\
+      4 & $538 \pm 147$ & 87  & $180 \pm 80$ & 55 \\
+      \bottomrule
+    \end{tabular}
+    \begin{tablenotes}[flushleft]\footnotesize
+      \item At $N = 1$ the two schedulers are indistinguishable: a BDP-sized queue already
+            delivers \texttt{BBox} on time regardless of send order. The scheduler's benefit
+            appears only once multiple publishers contend, and it does not restore
+            single-publisher performance.
+    \end{tablenotes}
+  \end{threeparttable}
+\end{table}
+
+
+% -------------------------------------------------------------------------------------
+% RQ3: mapping onto the 3GPP eV2X catalogue
+% -------------------------------------------------------------------------------------
+\begin{table}[htbp]
+  \centering
+  \begin{threeparttable}
+    \caption{The four enhanced-V2X categories of 3GPP TR 22.886 classified against the four
+             properties a workload must have for MoQ's mechanisms to help.}
+    \label{tab:ev2x}
+    \begin{tabular}{@{}>{\RaggedRight}p{0.19\textwidth}>{\RaggedRight}p{0.28\textwidth}>{\RaggedRight}p{0.43\textwidth}@{}}
+      \toprule
+      Category & Workload shape & Verdict \\
+      \midrule
+      \textbf{Extended sensors} & Small CPM-like safety stream alongside bulk perception
+        & \textbf{Measured here.} All four properties hold; this is the case this work answers. \\
+      \addlinespace
+      \textbf{Vehicle platooning} & Frequent small messages, little bulk to shed
+        & Properties (1)--(2) barely apply: with no bulk track there is nothing to sacrifice.
+          The BDP-sized window still helps; the delivery timeout has little to act on.
+          \emph{Inferred, untested.} \\
+      \addlinespace
+      \textbf{Advanced driving} & Coordination messages alongside sensor sharing
+        & Plausibly satisfies all four, depending on the sensor payload.
+          \emph{Inferred, untested.} \\
+      \addlinespace
+      \textbf{Remote driving} & Large uplink video \emph{is} the latency-critical stream
+        & \textbf{Violates property (1).} There is no bulk track to sacrifice, so shedding would
+          attack the critical stream itself. Predicted unsuitable on structural grounds. \\
+      \bottomrule
+    \end{tabular}
+    \begin{tablenotes}[flushleft]\footnotesize
+      \item Properties: (1) the latency-critical stream is small relative to competing traffic;
+            (2) competing traffic is loss-tolerant and independently interpretable;
+            (3) deadlines are known a priori and static; (4) the transport queue can be bounded
+            near the bandwidth-delay product.
+      \item Only the first row is measured. The others are classified by matching their
+            TS 22.186 requirements against these properties, which is reasoning rather than
+            evidence.
+    \end{tablenotes}
+  \end{threeparttable}
+\end{table}
+
+
+% -------------------------------------------------------------------------------------
+% Upstream defects found and fixed
+% -------------------------------------------------------------------------------------
+\begin{table}[htbp]
+  \centering
+  \begin{threeparttable}
+    \caption{Defects found in third-party simulators. Each silently corrupts results, and each
+             was found by investigating an implausible number rather than by a visible failure.}
+    \label{tab:upstream-bugs}
+    \begin{tabular}{@{}>{\RaggedRight}p{0.13\textwidth}>{\RaggedRight}p{0.38\textwidth}>{\RaggedRight}p{0.39\textwidth}@{}}
+      \toprule
+      Where & Defect & Effect \\
+      \midrule
+      \textbf{Simu5G} & \texttt{computeRuralMacro} passed the carrier frequency in \textbf{Hz}
+        into a TR 38.901 term specified in \textbf{GHz}
+        & A constant \textbf{+180\,dB} of phantom path loss; \texttt{RURAL\_MACROCELL} returned
+          252--281\,dB and no radio link survived. Cross-checked against ns-3's independent
+          implementation. \textbf{This blocked the entire highway scenario.} \\
+      \addlinespace
+      \textbf{INET QUIC} & \textsc{reset\_stream} released stream-level but not
+        \textbf{connection-level} flow-control credit for abandoned bytes (RFC 9000 §4.5)
+        & The connection window leaked shut on every reset, deadlocking any reset-heavy run. \\
+      \addlinespace
+      \textbf{INET QUIC} & Send-side flow control was a running byte counter that
+        \textbf{decremented on loss} and never re-charged retransmissions (RFC 9000 §4.1 charges
+        the \emph{highest offset sent})
+        & The sender credited itself window it had already spent, overran the peer's limit, and
+          the connection aborted with \textsc{flow\_control\_error} at small windows. \\
+      \bottomrule
+    \end{tabular}
+  \end{threeparttable}
+\end{table}
