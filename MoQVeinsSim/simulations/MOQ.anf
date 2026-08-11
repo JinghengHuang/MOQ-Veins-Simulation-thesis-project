@@ -937,8 +937,9 @@ import pandas as pd
 # (latency, deadline-miss, throughput). Data: the MOQ_Partial_Window / MOQ_SW_Window
 # sweeps (win = 64kB..2MB) in results/sweep. The window is swept toward the bandwidth-delay
 # product (~75kB); 128kB is the chosen operating point (findings/moq-operating-envelope.md).
-# Windows of ~300kB or more can hold a whole 300KB PCloud frame downstream, which is exactly
-# where bufferbloat returns and the safety track's deadline breaks.
+# Windows of ~300-350kB and above are past the measured latency knee, where the standing queue
+# grows deeper than the safety deadline and BBox's deadline breaks. NOTE: single seed per window,
+# so the 256/300kB pair is non-monotonic -- see the caveat printed on the figure.
 
 T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262}
 def ci95(x):
@@ -959,15 +960,15 @@ def load(track, metric):
         f'name =~ "*{track}*{metric}*" AND runattr:configname =~ "MOQ_*_Window"',
         include_itervars=True, include_runattrs=True)
     if df.empty:
-        return pd.DataFrame(columns=["configname", "window", "mean", "ci"])
+        return pd.DataFrame(columns=["configname", "window", "mean", "ci", "n"])
     df = df[df["value"].notna()]
     # Subscriber cars only: the publisher (car[0]) also records a track scalar, and for
     # throughput that is the SENT rate -- averaging it in would blend sent with received.
     df = df[~df["module"].str.contains(r"car\[0\]", regex=True)]
     df["window"] = df["win"].map(to_bytes) / 1e3   # kB
     per_run = df.groupby(["configname", "window", "runID"])["value"].mean().reset_index()
-    agg = per_run.groupby(["configname", "window"])["value"].agg(["mean", ci95]).reset_index()
-    agg.columns = ["configname", "window", "mean", "ci"]
+    agg = per_run.groupby(["configname", "window"])["value"].agg(["mean", ci95, "count"]).reset_index()
+    agg.columns = ["configname", "window", "mean", "ci", "n"]
     return agg
 
 SERIES = [("MOQ_Partial_Window", "MoQ partial (shedding)",     "#2b6cb0", "-o"),
@@ -982,7 +983,7 @@ PANELS = [
     (1, 1, "PCloud", "deadlineMissRatio", 100,  "deadline-miss (%)",   False, None),
     (1, 2, "PCloud", "throughput",        1e-6, "throughput (Mbps)",   False, None),
 ]
-WINDOWS = [64, 128, 256, 512, 1000, 2000]
+WINDOWS = [64, 128, 256, 300, 350, 400, 450, 512, 1000, 2000]
 
 props = chart.get_properties()
 utils.preconfigure_plot(props)
@@ -1004,9 +1005,13 @@ for (r, c, track, metric, scale, ylabel, logy, deadline) in PANELS:
         d = agg[agg["configname"] == cfg].sort_values("window")
         if d.empty:
             continue
-        ax.errorbar(d["window"], d["mean"] * scale, yerr=d["ci"] * scale, fmt=style,
+        multiseed = (d["n"] > 1).any()
+        ax.errorbar(d["window"], d["mean"] * scale,
+                    yerr=(d["ci"] * scale) if multiseed else None, fmt=style,
                     color=colour, label=label, capsize=3, markersize=6)
-    # Operating point (128kB) and the "holds a full 300KB frame" danger band.
+    # Operating point (128kB) and the post-knee danger band. The band starts at 300 kB because
+    # that is where the measured latency knee begins (see moq-operating-envelope.md section 1),
+    # NOT because a 300 KB frame fits: PCloud is 8 x 37.5 KB segments, not one 300 KB object.
     ax.axvspan(300, 4000, color="#c53030", alpha=0.06)
     ax.axvline(128, color="#2f855a", linewidth=1.3)
     if deadline is not None:
@@ -1027,8 +1032,13 @@ for (r, c, track, metric, scale, ylabel, logy, deadline) in PANELS:
 
 # Legend in the top-right panel (BBox throughput is a near-flat line, so there is room).
 axes[0][2].legend(loc="upper right", fontsize=8, framealpha=0.9)
+fig.text(0.5, 0.005,
+         "Single seed per window: no error bars are shown because none can be computed. "
+         "The 256/300 kB pair is non-monotonic (256 kB is worse than 300 kB), which is "
+         "run-to-run variance approaching the knee, not an effect of window size.",
+         ha="center", fontsize=8, style="italic", color="#742a2a")
 fig.suptitle("Effect of the QUIC flow-control window on both tracks (urban, single seed).  "
-             "Green = 128 kB operating point;  red band = window holds a full 300 KB frame",
+             "Green = 128 kB operating point;  red band = past the ~300-350 kB latency knee",
              fontsize=12)
 
 combined = pd.concat(export_rows, ignore_index=True) if export_rows else pd.DataFrame()
