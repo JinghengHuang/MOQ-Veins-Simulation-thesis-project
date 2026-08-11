@@ -201,17 +201,25 @@ collision warning; wrong trade for HD-map upload.
 The result depends on the *shape* of the workload, so the two object sizes are anchored to
 standards and measurement rather than chosen for convenience.
 
-**`BBox` = 50 B models one perceived object, not a whole message.** ETSI's analysis of the
-Collective Perception Service states that with the optional data fields added, the Perceived Object
-Container has "an average size of about **31 bytes** for each object included in the message"
-([ETSI TR 103 562](https://www.etsi.org/deliver/etsi_tr/103500_103599/103562/02.01.01_60/tr_103562v020101p.pdf),
-clause 4.2). 50 B is that container plus framing overhead. A *complete* CPM is larger — the ITS PDU
-header with the Management and Station Data containers "occupy around 121 Bytes"
-([Thandavarayan et al.](https://arxiv.org/abs/1908.11151), §II), and ETSI reports CPMs are segmented
-above a 1 100 byte threshold. **This matters for interpreting the result**: the safety track is
-~0.03% of offered bytes, and protecting it is therefore nearly free. Modelling a full CPM instead
-would shrink the size asymmetry from ~750× to ~125× — still large enough that the conclusion holds,
-but the margin is narrower than the headline figure suggests.
+**`BBox` = 50 B models one perceived object, not a whole message.** Two independent sources agree
+on the size of the CPM field that describes a single detected object. ETSI's analysis of the
+Collective Perception Service gives the Perceived Object Container "an average size of about
+**31 bytes** for each object included in the message"
+([ETSI TR 103 562](https://www.etsi.org/deliver/etsi_tr/103500_103599/103562/02.01.01_60/tr_103562v020101p.pdf));
+Thandavarayan et al. model it as a fixed "**Perceived Object Container (35 Bytes)** … per detected
+object" ([JNCA 2023](https://doi.org/10.1016/j.jnca.2023.103655), §5.1). 50 B is that container plus
+framing overhead, and sits comfortably above both.
+
+A *complete* CPM is several times larger: its mandatory "ITS PDU header, Management Container and
+Originating Vehicle Container" total **121 Bytes**, before any object is described, and ETSI
+segments CPMs above a 1 100 byte threshold. For a full safety message the same paper sets CAM size
+at **350 bytes**.
+
+**This matters for interpreting the result.** The safety track is ~0.03% of offered bytes, so
+protecting it is nearly free — that is *why* priority costs the bulk track so little. Had BBox been
+modelled as a whole 350 B CAM rather than a single perceived object, the size asymmetry would fall
+from ~750× to ~107×. Still large enough that the conclusion holds, but the margin is narrower than
+the headline figure suggests, and the asymmetry — not MoQ itself — is doing much of the work.
 
 **`PCloud` = 8 × 37.5 KB per sweep — segment size is sourced; the total is a deliberate load
 choice.** The 37.5 KB segment sits inside EMP's measured 30–38 KB per-vehicle upload
@@ -468,6 +476,16 @@ OASIS MQTT v5.0, RFC 9000) listed in [`GLOSSARY.md`](GLOSSARY.md).
   institution = {ETSI}, number = {TR 103 562}, year = {2019},
   note        = {Perceived Object Container averages ~31 bytes per object},
   url         = {https://www.etsi.org/deliver/etsi_tr/103500_103599/103562/02.01.01_60/tr_103562v020101p.pdf}
+}
+
+@article{thandavarayan2023scalable,
+  author  = {Thandavarayan, Gokulnath and Sepulcre, Miguel and Gozalvez, Javier and
+             Coll-Perales, Baldomero},
+  title   = {Scalable cooperative perception for connected and automated driving},
+  journal = {Journal of Network and Computer Applications},
+  volume  = {216}, pages = {103655}, year = {2023},
+  note    = {Perceived Object Container 35 bytes; mandatory headers/containers 121 bytes; CAM 350 bytes},
+  doi     = {10.1016/j.jnca.2023.103655}
 }
 
 @article{thandavarayan2020cpm,
