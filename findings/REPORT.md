@@ -193,8 +193,36 @@ requirement, MQTT's unbounded buffering is a **feature**.
 traffic — and only that, and only in the urban scenario.**
 
 **Urban:** MoQ delivers BBox at **33 ms with 0.2% deadline miss and full delivery**, while PCloud
-is **sacrificed** (21.6% delivered, missing its own deadline 99.6% of the time). Right trade for
+is **sacrificed** (21.4% delivered, missing its own deadline 99.6% of the time). Right trade for
 collision warning; wrong trade for HD-map upload.
+
+### Workload grounding — where the object sizes come from
+
+The result depends on the *shape* of the workload, so the two object sizes are anchored to
+standards and measurement rather than chosen for convenience.
+
+**`BBox` = 50 B models one perceived object, not a whole message.** ETSI's analysis of the
+Collective Perception Service states that with the optional data fields added, the Perceived Object
+Container has "an average size of about **31 bytes** for each object included in the message"
+([ETSI TR 103 562](https://www.etsi.org/deliver/etsi_tr/103500_103599/103562/02.01.01_60/tr_103562v020101p.pdf),
+clause 4.2). 50 B is that container plus framing overhead. A *complete* CPM is larger — the ITS PDU
+header with the Management and Station Data containers "occupy around 121 Bytes"
+([Thandavarayan et al.](https://arxiv.org/abs/1908.11151), §II), and ETSI reports CPMs are segmented
+above a 1 100 byte threshold. **This matters for interpreting the result**: the safety track is
+~0.03% of offered bytes, and protecting it is therefore nearly free. Modelling a full CPM instead
+would shrink the size asymmetry from ~750× to ~125× — still large enough that the conclusion holds,
+but the margin is narrower than the headline figure suggests.
+
+**`PCloud` = 8 × 37.5 KB per sweep — segment size is sourced; the total is a deliberate load
+choice.** The 37.5 KB segment sits inside EMP's measured 30–38 KB per-vehicle upload
+[@zhang2021emp], and the segmentation into independently usable units follows ETSI TS 103 324's
+"independently interpretable CPM" segments [@etsi103324]. The **number** of segments is not from
+EMP: EMP partitions the scene across vehicles so each uploads only its share, whereas this publisher
+sends a full sweep. The 300 KB total is set to place offered load ~1.3× above cell capacity, because
+congestion is the phenomenon under study. It is consistent with a compressed full frame — EMP reports
+a ~2.0 MB raw frame, and roadside LiDAR ranges "from 5-25 MB per frame"
+([Zimmer et al., 2024](https://arxiv.org/abs/2405.01750)) — but it is a load setting, not a fidelity
+claim, and should be read as one.
 
 **What this claim is, precisely: MoQ *directs* the unavoidable loss by policy — it does not serve
 the workload.** The link is over capacity for both tracks, so no configuration serves both; every
@@ -206,7 +234,7 @@ QUIC drowns the safety stream. A workload that needs the full point cloud *on ti
 a better protocol; it needs more capacity (spectrum, fewer subscribers, or a lower bulk rate).
 
 **Highway: MoQ no longer meets the deadline** (113 ± 50 ms mean, but **20.5% miss**). The ordering
-is unchanged — MoQ is still 85× faster than MQTT/QUIC — but the 100 ms target is not reliably met.
+is unchanged — MoQ is still 74× faster than MQTT/QUIC — but the 100 ms target is not reliably met.
 The highway differs from the urban grid in several ways at once, and this two-scenario design cannot
 cleanly separate their contributions. The dominant observable driver is geometry: the ~1.5 km cells
 keep vehicles near the cell edge for much of the run, where path loss is high and SINR low, so the
@@ -239,7 +267,7 @@ still constrains the design. See `moq-operating-envelope.md` §7.)*
 **(b) What partial reliability actually buys is a bounded bulk track.** With a shallow window the
 reliable baseline cannot drop anything, so the bulk backlog simply queues: PCloud arrives
 **13.8 s ± 1.3 s** late (urban) / **9.3 s ± 1.8 s** (highway). Shedding holds it at **951 ms** /
-**1045 ms** — a **14× / 9× reduction** — at the cost of delivering less of it. Both miss PCloud's
+**1021 ms** — a **14× / 9× reduction** — at the cost of delivering less of it. Both miss PCloud's
 deadline, so neither is *useful* for bulk data; but 1 s of bounded staleness and a 14 s unbounded
 backlog are different failure modes. Acting on 14-second-old perception data is arguably worse than
 having none.
@@ -250,6 +278,41 @@ backlog is therefore not only about freshness — it is what keeps the session a
 
 **So: the window protects the latency-critical track; the delivery timeout bounds staleness under
 overload.** Two distinct contributions, and they should be reported as such.
+
+### Which use cases, stated against the standard catalogue
+
+One workload shape was measured, so "which use cases" is answered by establishing **what properties
+a workload must have** and then classifying the standard catalogue against them. 3GPP groups
+enhanced V2X into four categories ([TR 22.886](https://www.3gpp.org/ftp/Specs/archive/22_series/22.886/),
+with quantified latency, reliability, payload and data-rate requirements per scenario in
+[TS 22.186](https://www.3gpp.org/ftp/Specs/archive/22_series/22.186/)).
+
+MoQ's mechanisms help a workload where **all four** hold:
+
+1. the latency-critical stream is **small relative to the competing traffic** (so priority is nearly
+   free rather than zero-sum);
+2. the competing traffic is **loss-tolerant and independently interpretable** (so shedding degrades
+   it rather than corrupting it);
+3. deadlines are **known a priori and static** for the session;
+4. the transport queue **can be bounded near the BDP**.
+
+| eV2X category (TR 22.886) | shape | verdict |
+|---|---|---|
+| **Extended sensors** | small CPM-like safety stream + bulk perception | **measured here** — all four hold; this is the case the report answers |
+| **Vehicle platooning** | frequent small messages, little bulk to shed | properties (1)–(2) barely apply: with no bulk track there is nothing to sacrifice. The BDP-sized window still helps; the delivery timeout has little to act on. **Inferred, untested.** |
+| **Advanced driving** | coordination messages alongside sensor sharing | plausibly satisfies all four, depending on the sensor payload. **Inferred, untested.** |
+| **Remote driving** | large uplink video *is* the latency-critical stream | **violates (1)**. There is no bulk track to sacrifice — shedding would attack the critical stream itself. Predicted unsuitable, on structural grounds. |
+
+Two honesty notes. **Only the first row is measured**; the others are classified by matching their
+TS 22.186 requirements against the four properties, which is reasoning, not evidence. And the tested
+shape is the **favourable** case for MoQ — small-critical-plus-large-tolerant is precisely what its
+mechanisms are designed for — so this result is closer to an upper bound on MoQ's benefit than to a
+representative sample of V2X.
+
+A further restriction cuts across all four rows: the workload here has **no inter-object
+dependencies** (§5), so shed objects cause no error propagation. Any codec with inter-frame
+prediction, or any incremental map update, violates that and would degrade far worse than the
+loss ratios here suggest.
 
 ## RQ3 (extended) — Does MoQ's priority hold as load scales across publishers?
 
@@ -373,6 +436,73 @@ Runs are executed in parallel (default: half the cores); 56 runs take ~28 min on
 3. **Consider leading with the bounded-window result**, and presenting partial reliability as the
    mechanism that bounds *bulk* staleness. That is what the data supports, and it is more defensible
    than "MoQ's shedding wins" — which the urban CIs do not support.
+
+---
+
+## References
+
+Sources cited above, beyond the protocol specifications (draft-ietf-moq-transport-14,
+OASIS MQTT v5.0, RFC 9000) listed in [`GLOSSARY.md`](GLOSSARY.md).
+
+```bibtex
+@inproceedings{zhang2021emp,
+  author    = {Zhang, Xumiao and Zhang, Anlan and Sun, Jiachen and Zhu, Xiao and
+               Guo, Y. Ethan and Qian, Feng and Mao, Z. Morley},
+  title     = {{EMP}: Edge-assisted Multi-vehicle Perception},
+  booktitle = {Proc. 27th Annual Int. Conf. on Mobile Computing and Networking (MobiCom '21)},
+  year      = {2021}, pages = {545--558}, publisher = {ACM},
+  doi       = {10.1145/3447993.3483242}
+}
+
+@techreport{etsi103324,
+  author      = {{ETSI}},
+  title       = {Intelligent Transport Systems ({ITS}); Vehicular Communications; Basic Set of
+                 Applications; Collective Perception Service; Release 2},
+  institution = {ETSI}, number = {TS 103 324}
+}
+
+@techreport{etsi103562,
+  author      = {{ETSI}},
+  title       = {Intelligent Transport Systems ({ITS}); Vehicular Communications; Basic Set of
+                 Applications; Analysis of the Collective Perception Service ({CPS}); Release 2},
+  institution = {ETSI}, number = {TR 103 562}, year = {2019},
+  note        = {Perceived Object Container averages ~31 bytes per object},
+  url         = {https://www.etsi.org/deliver/etsi_tr/103500_103599/103562/02.01.01_60/tr_103562v020101p.pdf}
+}
+
+@article{thandavarayan2020cpm,
+  author  = {Thandavarayan, Gokulnath and Sepulcre, Miguel and Gozalvez, Javier},
+  title   = {Generation of Cooperative Perception Messages for Connected and Automated Vehicles},
+  journal = {IEEE Transactions on Vehicular Technology}, year = {2020},
+  note    = {ITS PDU header + Management + Station Data containers ~121 bytes; preprint arXiv:1908.11151},
+  url     = {https://arxiv.org/abs/1908.11151}
+}
+
+@misc{zimmer2024pointcompress3d,
+  author = {Zimmer, Walter and Pranamulia, Ramandika and Zhou, Xingcheng and
+            Liu, Mingyu and Knoll, Alois C.},
+  title  = {{PointCompress3D}: A Point Cloud Compression Framework for Roadside {LiDARs}
+            in Intelligent Transportation Systems},
+  year   = {2024}, url = {https://arxiv.org/abs/2405.01750}
+}
+
+@techreport{3gpp22886,
+  author      = {{3GPP}},
+  title       = {Study on enhancement of {3GPP} support for {5G} {V2X} services},
+  institution = {3GPP}, number = {TR 22.886},
+  url         = {https://www.3gpp.org/ftp/Specs/archive/22_series/22.886/}
+}
+
+@techreport{3gpp22186,
+  author      = {{3GPP}},
+  title       = {Enhancement of {3GPP} support for {V2X} scenarios; Stage 1},
+  institution = {3GPP}, number = {TS 22.186},
+  url         = {https://www.3gpp.org/ftp/Specs/archive/22_series/22.186/}
+}
+```
+
+*Fill in the year and Release/version for the 3GPP and ETSI entries from the revision actually
+consulted — citing a 3GPP spec without a Release is a common review flag.*
 
 ---
 
