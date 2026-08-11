@@ -43,6 +43,11 @@ run_one() {
         echo "[$scen] seed=$s $label -> OK rejected=${rej:-?}"
     else
         mv "$dir/$label.sca" "$dir/$label.sca.aborted" 2>/dev/null
+        # Mark the vectors too -- they are named by ini config, not by label, so renaming only the
+        # .sca leaves a crashed run loadable by an **/*.vec input pattern (see run-comparison.sh).
+        for f in "$dir/$cfg"-*.vec "$dir/$cfg"-*.vci; do
+            [ -e "$f" ] && mv "$f" "$f.aborted"
+        done
         echo "[$scen] seed=$s $label -> ABORTED: $(grep -oE '<!> Error:.*' "$OUT/$scen/${label}_s$s.log" | head -1)"
     fi
 }

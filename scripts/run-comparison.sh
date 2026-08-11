@@ -82,6 +82,12 @@ run_one() {
     else
         status="ABORTED: $(grep -oE '<!> Error:.*' "$OUT/${label}_s$s.log" | head -1)"
         mv "$dir/$label.sca" "$dir/$label.sca.aborted" 2>/dev/null   # keep it out of the analysis
+        # Vectors too. They are named by ini config rather than by label, so renaming only the
+        # .sca left them loadable: an .anf input pattern of **/*.vec would pull a crashed run into
+        # a vector chart with nothing marking it as dead. Same survivor-bias hazard as the .sca.
+        for f in "$dir/$cfg"-*.vec "$dir/$cfg"-*.vci; do
+            [ -e "$f" ] && mv "$f" "$f.aborted"
+        done
     fi
     echo "[$SCENARIO] seed=$s $label -> $status rejected=${rej:-?}"
 }
