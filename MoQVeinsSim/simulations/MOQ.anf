@@ -12,7 +12,7 @@
         <input pattern="results/prio_oppoint/**/*.sca"/>
     </inputs>
     <charts>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000001" name="RQ2_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1809264433" name="RQ2_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -118,7 +118,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Safety track (BBox): end-to-end latency. Only MoQ with a bounded window meets the 100ms deadline"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000002" name="RQ2_BBox_deadline_miss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1346780808" name="RQ2_BBox_deadline_miss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -223,7 +223,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Safety track (BBox): deadline-miss ratio"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000003" name="RQ2_PCloud_goodput" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="668344576" name="RQ2_PCloud_goodput" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -328,7 +328,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Bulk track (PCloud): goodput. MoQ does NOT beat MQTT on throughput"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000004" name="RQ2_BBox_delivered" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1509314423" name="RQ2_BBox_delivered" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -434,7 +434,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Safety track (BBox): objects delivered per subscriber"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000005" name="RQ3_sweep_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1410734926" name="RQ3_sweep_BBox_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -567,7 +567,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Window sweep: the bounded window, not shedding, is what buys the deadline"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000006" name="RQ3_sweep_PCloud_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="956987204" name="RQ3_sweep_PCloud_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -697,7 +697,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Window sweep: what shedding DOES buy is a bounded bulk track"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000007" name="RQ2_BBox_latency_CDF" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1763795130" name="RQ2_BBox_latency_CDF" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -830,7 +830,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Safety track (BBox): latency distribution (urban)"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000008" name="PubScale_BBox_vs_publishers" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1059798596" name="PubScale_BBox_vs_publishers" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -929,7 +929,7 @@ utils.export_data_if_needed(out, props)
 ]]></script>
             <property name="Graph.Title" value="Publisher-count sweep (constant load): BBox deadline-miss and latency, round-robin vs priority scheduler"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000009" name="RQ3_window_effect_all" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1252840959" name="RQ3_window_effect_all" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1051,7 +1051,7 @@ utils.export_data_if_needed(combined, props)
 ]]></script>
             <property name="Graph.Title" value="Window sweep: effect on latency, deadline-miss and throughput for both tracks"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000010" name="RQ2_latency_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1946311594" name="RQ2_latency_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1121,7 +1121,7 @@ utils.export_data_if_needed(combined, props)
 ]]></script>
             <property name="Graph.Title" value="Latency by protocol (both tracks): TCP's BBox moves at its PCloud's pace (HOL); QUIC decouples them"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000011" name="RQ2_deadline_miss_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="2044369841" name="RQ2_deadline_miss_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1188,7 +1188,7 @@ utils.export_data_if_needed(combined, props)
 ]]></script>
             <property name="Graph.Title" value="Deadline-miss by protocol (both tracks)"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000012" name="RQ2_throughput_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1750799453" name="RQ2_throughput_both_tracks" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1257,7 +1257,7 @@ utils.export_data_if_needed(combined, props)
 ]]></script>
             <property name="Graph.Title" value="Throughput by protocol (both tracks)"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000013" name="OpPoint_128_vs_300" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1364379727" name="OpPoint_128_vs_300" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1333,7 +1333,7 @@ utils.export_data_if_needed(combined, props)
 ]]></script>
             <property name="Graph.Title" value="Operating point: 128kB canonical vs 300kB tested-and-rejected (safety cost vs bulk benefit)"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000014" name="PerSub_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="2120986329" name="PerSub_latency" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1522,7 +1522,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Per-subscriber latency: every protocol on every subscriber, both tracks and scenarios"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000015" name="PerSub_deadline_miss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1407328310" name="PerSub_deadline_miss" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1710,7 +1710,7 @@ utils.export_data_if_needed(agg, props)
 ]]></script>
             <property name="Graph.Title" value="Per-subscriber deadline-miss ratio: every protocol on every subscriber"/>
         </chart>
-        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="910000016" name="PerSub_throughput" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
+        <chart createdWith="OMNeT++ 6.3.0" icon="icons/full/obj/linechart.png" id="1719317226" name="PerSub_throughput" resultTypes="scalar" template="generic_mpl" type="MATPLOTLIB">
             <script><![CDATA[from omnetpp.scave import results, chart, utils
 import matplotlib.pyplot as plt
 import numpy as np
@@ -2023,11 +2023,6 @@ axes[0].legend(loc="upper left", fontsize=9, framealpha=0.9)
 fig.suptitle("Priority scheduling does not substitute for a bounded window\n"
              "Both arms track each other: at 2 MB the backlog already sits below QUIC, "
              "where the scheduler cannot reorder it", fontsize=12)
-fig.text(0.5, 0.005,
-         "Hollow markers with error bars are 5-seed means (95% CI) at the two operating points; "
-         "all other points are a single seed, and each window uses a different seed. "
-         "Green line = 128 kB operating point.",
-         ha="center", fontsize=8, style="italic", color="#4a5568")
 
 combined = pd.concat(export, ignore_index=True) if export else pd.DataFrame()
 utils.postconfigure_plot(props)
